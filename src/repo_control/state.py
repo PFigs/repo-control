@@ -3,6 +3,8 @@ from pathlib import Path
 
 from repo_control import git
 
+REPO_DIR_SUFFIX = "-control"
+
 
 @dataclass(frozen=True)
 class RepoDir:
@@ -23,31 +25,35 @@ def slugify_branch(*, branch: str) -> str:
     return branch.replace("/", "-").replace(" ", "-")
 
 
-def repo_dir_name(*, owner: str, name: str) -> str:
-    return f"{owner}__{name}"
-
-
-def parse_repo_dir(*, name: str) -> tuple[str, str] | None:
-    if "__" not in name:
-        return None
-    owner, repo = name.split("__", 1)
-    if not owner or not repo:
-        return None
-    return owner, repo
+def repo_dir_name(*, name: str) -> str:
+    return f"{name}{REPO_DIR_SUFFIX}"
 
 
 def worktree_dir_name(*, pr_number: int, branch: str) -> str:
     return f"{pr_number}-{slugify_branch(branch=branch)}"
 
 
-def list_repo_dirs(*, root: Path) -> list[RepoDir]:
-    if not root.exists():
+def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
+    return base_path / repo_dir_name(name=name)
+
+
+def discover_repos(*, base_path: Path) -> list[RepoDir]:
+    """Walk <base>/*-control/ dirs and recover (owner, name) from each main/'s remote."""
+    if not base_path.exists():
         return []
     out: list[RepoDir] = []
-    for child in sorted(root.iterdir()):
+    for child in sorted(base_path.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
-        parsed = parse_repo_dir(name=child.name)
+        if not child.name.endswith(REPO_DIR_SUFFIX):
+            continue
+        main = child / "main"
+        if not main.exists():
+            continue
+        url = git.remote_url(repo_path=main)
+        if url is None:
+            continue
+        parsed = git.parse_owner_repo(url=url)
         if parsed is None:
             continue
         owner, name = parsed

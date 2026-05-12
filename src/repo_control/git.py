@@ -50,6 +50,31 @@ def default_branch(*, repo_path: Path) -> str:
     raise GitError(f"could not determine default branch for {repo_path}")
 
 
+def remote_url(*, repo_path: Path) -> str | None:
+    result = _run(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=repo_path,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def parse_owner_repo(*, url: str) -> tuple[str, str] | None:
+    cleaned = url.removesuffix(".git").rstrip("/")
+    for marker in ("github.com:", "github.com/"):
+        idx = cleaned.find(marker)
+        if idx == -1:
+            continue
+        tail = cleaned[idx + len(marker):]
+        parts = tail.split("/")
+        if len(parts) < 2:
+            return None
+        return parts[0], parts[1]
+    return None
+
+
 def fetch(*, repo_path: Path, refspec: str | None = None) -> None:
     args = ["git", "fetch", "origin", "--prune"]
     if refspec is not None:

@@ -1,9 +1,12 @@
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from repo_control import config, gh, git, ide, setup, state
+
+SKILL_NAME = "repo-control"
 
 
 @dataclass(frozen=True)
@@ -18,7 +21,7 @@ class WorktreeRow:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="repo-control",
-        description="Mirror your open GitHub PRs as worktrees under ~/workspace/repo-control/.",
+        description="Mirror your open GitHub PRs as per-repo worktree folders under a base path.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("sync", help="Refresh worktrees from open PRs")
@@ -28,6 +31,10 @@ def main() -> int:
     open_p.add_argument("--ide", choices=sorted(ide.COMMANDS), default=None)
     clean_p = sub.add_parser("clean", help="Remove stale worktrees")
     clean_p.add_argument("--force", action="store_true", help="Also drop dirty worktrees (with confirmation)")
+    install_p = sub.add_parser("install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/")
+    install_p.add_argument("--uninstall", action="store_true", help="Remove the symlink")
+    install_p.add_argument("--force", action="store_true", help="Replace an existing non-symlink at the destination")
+    sub.add_parser("setup", help="Interactive first-run configuration (or re-configure later)")
 
     args = parser.parse_args()
     try:
@@ -39,6 +46,10 @@ def main() -> int:
             return cmd_open(reference=args.pr, ide_override=args.ide)
         if args.cmd == "clean":
             return cmd_clean(force=args.force)
+        if args.cmd == "install-skill":
+            return cmd_install_skill(uninstall=args.uninstall, force=args.force)
+        if args.cmd == "setup":
+            return cmd_setup()
     except (gh.GhError, git.GitError, ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -47,11 +58,16 @@ def main() -> int:
 
 def cmd_sync() -> int:
     gh.check_auth()
-    config.ensure_default_file()
+    if not config.exists():
+        print("No config found; running first-run setup.\n")
+        rc = cmd_setup()
+        if rc != 0:
+            return rc
+        print()
     cfg = config.load()
     skip = set(cfg["skip_repos"])
-    root = config.root()
-    root.mkdir(parents=True, exist_ok=True)
+    base = config.base_path(cfg=cfg)
+    base.mkdir(parents=True, exist_ok=True)
 
     prs = gh.list_open_prs()
     desired: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
@@ -67,8 +83,17 @@ def cmd_sync() -> int:
     setup_steps: dict[Path, list[str]] = {}
 
     for (owner, name), prs_by_num in sorted(desired.items()):
-        repo_path = root / state.repo_dir_name(owner=owner, name=name)
+        repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
         main_path = repo_path / "main"
+        if repo_path.exists() and main_path.exists():
+            existing = git.remote_url(repo_path=main_path)
+            existing_parsed = git.parse_owner_repo(url=existing) if existing else None
+            if existing_parsed is not None and existing_parsed != (owner, name):
+                print(
+                    f"skipping {owner}/{name}: {repo_path} already mirrors "
+                    f"{existing_parsed[0]}/{existing_parsed[1]} (name collision)"
+                )
+                continue
         if not main_path.exists():
             print(f"cloning {owner}/{name} ...")
             git.clone(owner=owner, name=name, target=main_path)
@@ -105,12 +130,10 @@ def cmd_sync() -> int:
             created.append(wt_path)
             setup_steps[wt_path] = setup.run_init(worktree_path=wt_path)
 
-    for repo in state.list_repo_dirs(root=root):
+    for repo in state.discover_repos(base_path=base):
         wanted = desired.get((repo.owner, repo.name), {})
         wanted_paths = {repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch) for pr in wanted.values()}
         wanted_paths.add(repo.main_path)
-        if not repo.main_path.exists():
-            continue
         default = git.default_branch(repo_path=repo.main_path)
         for worktree in state.existing_worktrees(repo=repo):
             wt_path = worktree.path.resolve()
@@ -159,20 +182,19 @@ def cmd_open(*, reference: str, ide_override: str | None) -> int:
 
 def cmd_clean(*, force: bool) -> int:
     gh.check_auth()
+    cfg = config.load()
+    base = config.base_path(cfg=cfg)
     prs = gh.list_open_prs()
     wanted_by_repo: dict[tuple[str, str], set[Path]] = {}
-    root = config.root()
     for pr in prs:
         key = (pr.base_owner, pr.base_repo)
-        repo_path = root / state.repo_dir_name(owner=pr.base_owner, name=pr.base_repo)
+        repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
         wt = repo_path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
         wanted_by_repo.setdefault(key, set()).add(wt.resolve())
 
-    stale_clean: list[tuple[Path, Path, str | None]] = []  # (main_path, wt_path, branch)
-    stale_dirty: list[Path] = []
-    for repo in state.list_repo_dirs(root=root):
-        if not repo.main_path.exists():
-            continue
+    stale_clean: list[tuple[Path, Path, str | None]] = []
+    stale_dirty: list[tuple[Path, Path]] = []  # (main_path, wt_path)
+    for repo in state.discover_repos(base_path=base):
         wanted = wanted_by_repo.get((repo.owner, repo.name), set())
         default = git.default_branch(repo_path=repo.main_path)
         for worktree in state.existing_worktrees(repo=repo):
@@ -184,7 +206,7 @@ def cmd_clean(*, force: bool) -> int:
             if git.is_clean(worktree_path=wt_path):
                 stale_clean.append((repo.main_path, wt_path, worktree.branch if worktree.branch != default else None))
             else:
-                stale_dirty.append(wt_path)
+                stale_dirty.append((repo.main_path, wt_path))
 
     for main_path, wt_path, branch in stale_clean:
         git.worktree_remove(repo_path=main_path, target=wt_path)
@@ -196,30 +218,135 @@ def cmd_clean(*, force: bool) -> int:
         return 0
     if not force:
         print(f"\n{len(stale_dirty)} dirty stale worktree(s) preserved:")
-        for path in stale_dirty:
+        for _, path in stale_dirty:
             print(f"  {path}")
         print("re-run with --force to drop them anyway")
         return 0
     print(f"\nabout to remove {len(stale_dirty)} dirty worktree(s):")
-    for path in stale_dirty:
+    for _, path in stale_dirty:
         print(f"  {path}")
     answer = input("type 'yes' to confirm: ").strip().lower()
     if answer != "yes":
         print("aborted")
         return 1
-    for wt_path in stale_dirty:
-        repo_main = wt_path.parent / "main"
-        git.worktree_remove(repo_path=repo_main, target=wt_path)
+    for main_path, wt_path in stale_dirty:
+        git.worktree_remove(repo_path=main_path, target=wt_path)
         print(f"removed {wt_path}")
     return 0
 
 
+def _prompt(*, label: str, default: str) -> str:
+    try:
+        raw = input(f"{label} [{default}]: ").strip()
+    except EOFError:
+        return default
+    return raw or default
+
+
+def cmd_setup() -> int:
+    cfg = config.load()
+    print(f"Writing config to {config.config_path()}\n")
+
+    base = os.path.expanduser(_prompt(
+        label="Base path (where <repo>-control/ folders live)",
+        default=cfg["base_path"],
+    ))
+
+    ide_choices = sorted(ide.COMMANDS)
+    ide_choice = cfg["ide"]
+    while True:
+        ide_choice = _prompt(
+            label=f"Default IDE ({'/'.join(ide_choices)})",
+            default=ide_choice,
+        )
+        if ide_choice in ide_choices:
+            break
+        print(f"  pick one of {ide_choices}")
+
+    skip_raw = _prompt(
+        label="Repos to skip (comma-separated owner/repo)",
+        default=", ".join(cfg["skip_repos"]),
+    )
+    skip_repos = [item.strip() for item in skip_raw.split(",") if item.strip()]
+
+    Path(base).mkdir(parents=True, exist_ok=True)
+    written = config.write(base_path=base, ide=ide_choice, skip_repos=skip_repos)
+    print(f"\nWrote {written}")
+    return 0
+
+
+def cmd_install_skill(*, uninstall: bool, force: bool) -> int:
+    source = _bundled_skill_source()
+    target = Path.home() / ".claude" / "skills" / SKILL_NAME
+
+    if uninstall:
+        if not target.exists() and not target.is_symlink():
+            print(f"{target} does not exist; nothing to remove")
+            return 0
+        if target.is_symlink():
+            target.unlink()
+            print(f"unlinked {target}")
+            return 0
+        if not force:
+            print(
+                f"refusing to remove {target}: not a symlink. "
+                "Inspect manually or re-run with --force.",
+                file=sys.stderr,
+            )
+            return 1
+        if target.is_dir():
+            _rmtree(target)
+        else:
+            target.unlink()
+        print(f"removed {target}")
+        return 0
+
+    if not source.exists():
+        print(
+            f"bundled skill source not found at {source}; "
+            "is this an editable install?",
+            file=sys.stderr,
+        )
+        return 1
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        if target.resolve() == source.resolve():
+            print(f"{target} -> {source} already in place")
+            return 0
+        target.unlink()
+    elif target.exists():
+        if not force:
+            print(
+                f"refusing to overwrite {target}: not a symlink. "
+                "Back it up and re-run with --force.",
+                file=sys.stderr,
+            )
+            return 1
+        if target.is_dir():
+            _rmtree(target)
+        else:
+            target.unlink()
+
+    target.symlink_to(source, target_is_directory=True)
+    print(f"linked {target} -> {source}")
+    return 0
+
+
+def _rmtree(path: Path) -> None:
+    import shutil
+    shutil.rmtree(path)
+
+
+def _bundled_skill_source() -> Path:
+    return Path(__file__).resolve().parent / "skill"
+
+
 def _collect_rows() -> list[WorktreeRow]:
     rows: list[WorktreeRow] = []
-    root = config.root()
-    for repo in state.list_repo_dirs(root=root):
-        if not repo.main_path.exists():
-            continue
+    cfg = config.load()
+    base = config.base_path(cfg=cfg)
+    for repo in state.discover_repos(base_path=base):
         default = git.default_branch(repo_path=repo.main_path)
         for worktree in state.existing_worktrees(repo=repo):
             wt_path = worktree.path

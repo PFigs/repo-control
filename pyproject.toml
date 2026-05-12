@@ -1,7 +1,7 @@
 [project]
 name = "repo-control"
 version = "0.1.0"
-description = "Mirror open GitHub PRs as git worktrees under ~/workspace/repo-control/"
+description = "Mirror open GitHub PRs as per-repo git worktree clusters"
 requires-python = ">=3.12"
 dependencies = []
 
