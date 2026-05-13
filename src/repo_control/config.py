@@ -19,6 +19,7 @@ DEFAULTS: dict = {
     "skip_repos": [],
     "auto_install": True,
     "auto_trust_mise": True,
+    "worktree_layout": "hierarchical",
 }
 
 
@@ -46,6 +47,7 @@ def write(
     skip_repos: list[str],
     auto_install: bool = True,
     auto_trust_mise: bool = True,
+    worktree_layout: str = "hierarchical",
 ) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +58,7 @@ def write(
         f"skip_repos = [{skip_repr}]\n"
         f"auto_install = {str(auto_install).lower()}\n"
         f"auto_trust_mise = {str(auto_trust_mise).lower()}\n"
+        f'worktree_layout = "{worktree_layout}"\n'
     )
     return path
 

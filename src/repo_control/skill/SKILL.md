@@ -6,25 +6,31 @@ allowed-tools: Bash
 
 # repo-control
 
-For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a sibling `<repo>-control/` folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's `main/` worktree plus one worktree per open PR.
+For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a per-repo folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's `main/` worktree plus one worktree per open PR.
 
 ```
 <base_path>/
-  webapp-control/
-    main/                        # always kept
-    142-fix_navbar_overflow/     # one worktree per open PR
-    141-add_dark_mode/
-  cli-tool-control/
+  webapp/                        # hierarchical layout (default)
+    main/
+    .worktrees/
+      142-fix_navbar_overflow/
+      141-add_dark_mode/
+  cli-tool/                      # flat layout
     main/
     37-bump_python_to_312/
 ```
+
+Pre-existing `<repo>-control/` directories from older versions are reused in place; only new clones use the bare `<repo>/` name.
 
 Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). Created interactively by `repo-control setup` or on first `sync`.
 
 ```toml
 base_path = "/home/<user>/.local/share/repo-control"
-ide = "idea"          # any binary on PATH; suggestions: idea, code, zed
-skip_repos = []       # ["owner/repo", ...]
+ide = "idea"                       # any binary on PATH; suggestions: idea, code, zed
+skip_repos = []                    # ["owner/repo", ...]
+auto_install = true                # run mise install / uv sync / npm install in fresh worktrees
+auto_trust_mise = true             # `mise trust` before `mise install` to skip its prompt
+worktree_layout = "hierarchical"   # "hierarchical" (.worktrees/) or "flat" (siblings)
 ```
 
 ## Preflight (once per session)

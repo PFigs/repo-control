@@ -132,8 +132,13 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         git.fast_forward(repo_path=main_path, branch=default)
 
         for pr_number, pr in sorted(prs_by_num.items()):
-            wt_name = state.worktree_dir_name(pr_number=pr_number, branch=pr.head_branch)
-            wt_path = repo_path / wt_name
+            wt_path = state.worktree_path(
+                repo_path=repo_path,
+                pr_number=pr_number,
+                branch=pr.head_branch,
+                layout=cfg["worktree_layout"],
+            )
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
             if wt_path.exists():
                 if pr.is_fork and pr.fork_clone_url:
@@ -165,7 +170,12 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             continue
         wanted = desired.get((repo.owner, repo.name), {})
         wanted_paths = {
-            repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
+            state.worktree_path(
+                repo_path=repo.path,
+                pr_number=pr.number,
+                branch=pr.head_branch,
+                layout=cfg["worktree_layout"],
+            )
             for pr in wanted.values()
         }
         wanted_paths.add(repo.main_path)
@@ -224,7 +234,12 @@ def cmd_clean(*, force: bool) -> int:
     for pr in prs:
         key = (pr.base_owner, pr.base_repo)
         repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
-        wt = repo_path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
+        wt = state.worktree_path(
+            repo_path=repo_path,
+            pr_number=pr.number,
+            branch=pr.head_branch,
+            layout=cfg["worktree_layout"],
+        )
         wanted_by_repo.setdefault(key, set()).add(wt.resolve())
 
     stale_clean: list[tuple[Path, Path, str | None]] = []
@@ -370,6 +385,14 @@ def cmd_setup() -> int:
             default=cfg["auto_trust_mise"],
         )
 
+    layout_choice = _prompt(
+        label="Worktree layout (hierarchical: <repo>/.worktrees/<pr>-<branch>; flat: <repo>/<pr>-<branch>)",
+        default=cfg["worktree_layout"],
+    ).strip().lower()
+    if layout_choice not in {"hierarchical", "flat"}:
+        print(f"  unknown layout {layout_choice!r}; using 'hierarchical'")
+        layout_choice = "hierarchical"
+
     Path(base).mkdir(parents=True, exist_ok=True)
     written = config.write(
         base_path=base,
@@ -377,6 +400,7 @@ def cmd_setup() -> int:
         skip_repos=skip_repos,
         auto_install=auto_install,
         auto_trust_mise=auto_trust_mise,
+        worktree_layout=layout_choice,
     )
     print(f"\nWrote {written}")
     return 0

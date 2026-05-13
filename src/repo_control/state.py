@@ -3,7 +3,8 @@ from pathlib import Path
 
 from repo_control import git
 
-REPO_DIR_SUFFIX = "-control"
+LEGACY_REPO_DIR_SUFFIX = "-control"
+WORKTREES_SUBDIR = ".worktrees"
 
 
 @dataclass(frozen=True)
@@ -25,27 +26,32 @@ def slugify_branch(*, branch: str) -> str:
     return branch.replace("/", "-").replace(" ", "-")
 
 
-def repo_dir_name(*, name: str) -> str:
-    return f"{name}{REPO_DIR_SUFFIX}"
-
-
 def worktree_dir_name(*, pr_number: int, branch: str) -> str:
     return f"{pr_number}-{slugify_branch(branch=branch)}"
 
 
+def worktree_path(*, repo_path: Path, pr_number: int, branch: str, layout: str) -> Path:
+    name = worktree_dir_name(pr_number=pr_number, branch=branch)
+    if layout == "hierarchical":
+        return repo_path / WORKTREES_SUBDIR / name
+    return repo_path / name
+
+
 def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
-    return base_path / repo_dir_name(name=name)
+    """Prefer an existing legacy <name>-control dir; otherwise return <base>/<name>."""
+    legacy = base_path / f"{name}{LEGACY_REPO_DIR_SUFFIX}"
+    if legacy.exists():
+        return legacy
+    return base_path / name
 
 
 def discover_repos(*, base_path: Path) -> list[RepoDir]:
-    """Walk <base>/*-control/ dirs and recover (owner, name) from each main/'s remote."""
+    """Walk <base>/<*>/main and recover (owner, name) from each main's remote."""
     if not base_path.exists():
         return []
     out: list[RepoDir] = []
     for child in sorted(base_path.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
-            continue
-        if not child.name.endswith(REPO_DIR_SUFFIX):
             continue
         main = child / "main"
         if not main.exists():
