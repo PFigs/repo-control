@@ -56,7 +56,7 @@ Do not retry blindly. Do not bootstrap silently.
 
 ## sync
 
-Run `repo-control sync` and show the summary verbatim. When the user names a single repo (e.g. "sync just PFigs/repo-control" or pastes a GitHub URL), pass it as an argument: `repo-control sync PFigs/repo-control` — only that repo's worktrees are created/refreshed/cleaned; others are left untouched. If no config exists yet, sync will auto-launch `setup` which is interactive — let it complete. After sync finishes, surface anything that needs the user's attention:
+Run `repo-control sync` and show the summary verbatim. When the user names a single repo (e.g. "sync just PFigs/repo-control" or pastes a GitHub URL), pass it as an argument: `repo-control sync PFigs/repo-control` — only that repo's worktrees are created/refreshed/cleaned; others are left untouched. Otherwise sync may show an interactive repo picker (arrows/space/enter) when multiple repos have open PRs — let it complete. If no config exists yet, sync will auto-launch `setup` which is interactive — let it complete. After sync finishes, surface anything that needs the user's attention:
 
 - Worktrees kept dirty (PR closed but uncommitted work present) — call them out by path.
 - Fork PRs that failed to fetch — print the error.

@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from repo_control import config, gh, git, ide, setup, state
+from repo_control import config, gh, git, ide, picker, setup, state
 
 SKILL_NAME = "repo-control"
 
@@ -87,18 +87,24 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
     base = config.base_path(cfg=cfg)
     base.mkdir(parents=True, exist_ok=True)
 
-    repo_filter = _parse_repo_arg(value=repo_arg) if repo_arg else None
-    if repo_arg and repo_filter is None:
+    single_repo = _parse_repo_arg(value=repo_arg) if repo_arg else None
+    if repo_arg and single_repo is None:
         raise ValueError(f"could not parse {repo_arg!r} as owner/name or GitHub URL")
 
     prs = gh.list_open_prs()
-    desired: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
+    by_repo: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
     for pr in prs:
         if pr.base_slug in skip:
             continue
-        if repo_filter is not None and (pr.base_owner, pr.base_repo) != repo_filter:
+        if single_repo is not None and (pr.base_owner, pr.base_repo) != single_repo:
             continue
-        desired.setdefault((pr.base_owner, pr.base_repo), {})[pr.number] = pr
+        by_repo.setdefault((pr.base_owner, pr.base_repo), {})[pr.number] = pr
+
+    selected_repos = _select_repos_interactive(by_repo=by_repo, single_repo=single_repo)
+    if selected_repos is None:
+        print("sync cancelled")
+        return 0
+    desired = {key: prs_by_num for key, prs_by_num in by_repo.items() if key in selected_repos}
 
     created: list[Path] = []
     refreshed: list[Path] = []
@@ -155,7 +161,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             setup_steps[wt_path] = setup.run_init(worktree_path=wt_path, cfg=cfg)
 
     for repo in state.discover_repos(base_path=base):
-        if repo_filter is not None and (repo.owner, repo.name) != repo_filter:
+        if (repo.owner, repo.name) not in selected_repos:
             continue
         wanted = desired.get((repo.owner, repo.name), {})
         wanted_paths = {
@@ -268,6 +274,28 @@ def cmd_clean(*, force: bool) -> int:
         git.worktree_remove(repo_path=main_path, target=wt_path)
         print(f"removed {wt_path}")
     return 0
+
+
+def _select_repos_interactive(
+    *,
+    by_repo: dict[tuple[str, str], dict[int, gh.OpenPR]],
+    single_repo: tuple[str, str] | None,
+) -> set[tuple[str, str]] | None:
+    """Show a picker when there's a real choice; otherwise return everything in by_repo."""
+    all_keys = set(by_repo.keys())
+    if single_repo is not None or len(by_repo) <= 1 or not sys.stdin.isatty():
+        return all_keys
+    choices = [
+        picker.Choice(key=f"{owner}/{name}", label=f"{owner}/{name} ({len(prs)} PRs)")
+        for (owner, name), prs in sorted(by_repo.items())
+    ]
+    chosen_keys = picker.select_multi(
+        title="Repos to sync:", choices=choices, default_selected=True
+    )
+    if chosen_keys is None:
+        return None
+    chosen_set = set(chosen_keys)
+    return {(owner, name) for owner, name in by_repo if f"{owner}/{name}" in chosen_set}
 
 
 def _parse_repo_arg(*, value: str) -> tuple[str, str] | None:
