@@ -114,7 +114,9 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
 
     for (owner, name), prs_by_num in sorted(desired.items()):
         repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
-        main_path = state.ensure_main_path(repo_path=repo_path, name=name)
+        main_path = state.ensure_main_path(
+            repo_path=repo_path, name=name, prefix=cfg["prefix_worktrees"]
+        )
         if repo_path.exists() and main_path.exists():
             existing = git.remote_url(repo_path=main_path)
             existing_parsed = git.parse_owner_repo(url=existing) if existing else None
@@ -139,6 +141,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 pr_number=pr_number,
                 branch=pr.head_branch,
                 layout=cfg["worktree_layout"],
+                prefix=cfg["prefix_worktrees"],
             )
             wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
@@ -178,6 +181,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 pr_number=pr.number,
                 branch=pr.head_branch,
                 layout=cfg["worktree_layout"],
+                prefix=cfg["prefix_worktrees"],
             )
             for pr in wanted.values()
         }
@@ -243,6 +247,7 @@ def cmd_clean(*, force: bool) -> int:
             pr_number=pr.number,
             branch=pr.head_branch,
             layout=cfg["worktree_layout"],
+            prefix=cfg["prefix_worktrees"],
         )
         wanted_by_repo.setdefault(key, set()).add(wt.resolve())
 
@@ -397,6 +402,11 @@ def cmd_setup() -> int:
         print(f"  unknown layout {layout_choice!r}; using 'hierarchical'")
         layout_choice = "hierarchical"
 
+    prefix_worktrees = _prompt_bool(
+        label="Prefix worktree folders with the lowercase repo name (e.g. webapp-main, webapp-142-fix)?",
+        default=cfg["prefix_worktrees"],
+    )
+
     Path(base).mkdir(parents=True, exist_ok=True)
     written = config.write(
         base_path=base,
@@ -405,6 +415,7 @@ def cmd_setup() -> int:
         auto_install=auto_install,
         auto_trust_mise=auto_trust_mise,
         worktree_layout=layout_choice,
+        prefix_worktrees=prefix_worktrees,
     )
     print(f"\nWrote {written}")
     return 0

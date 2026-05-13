@@ -23,18 +23,25 @@ def slugify_branch(*, branch: str) -> str:
     return branch.replace("/", "-").replace(" ", "-")
 
 
-def main_dir_name(*, name: str) -> str:
-    return f"{name.lower()}-main"
+def main_dir_name(*, name: str, prefix: bool) -> str:
+    return f"{name.lower()}-main" if prefix else "main"
 
 
-def worktree_dir_name(*, name: str, pr_number: int, branch: str) -> str:
-    return f"{name.lower()}-{pr_number}-{slugify_branch(branch=branch)}"
+def worktree_dir_name(*, name: str, pr_number: int, branch: str, prefix: bool) -> str:
+    suffix = f"{pr_number}-{slugify_branch(branch=branch)}"
+    return f"{name.lower()}-{suffix}" if prefix else suffix
 
 
 def worktree_path(
-    *, repo_path: Path, name: str, pr_number: int, branch: str, layout: str
+    *,
+    repo_path: Path,
+    name: str,
+    pr_number: int,
+    branch: str,
+    layout: str,
+    prefix: bool,
 ) -> Path:
-    folder = worktree_dir_name(name=name, pr_number=pr_number, branch=branch)
+    folder = worktree_dir_name(name=name, pr_number=pr_number, branch=branch, prefix=prefix)
     if layout == "hierarchical":
         return repo_path / WORKTREES_SUBDIR / folder
     return repo_path / folder
@@ -51,16 +58,16 @@ def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
     return base_path / name.lower()
 
 
-def ensure_main_path(*, repo_path: Path, name: str) -> Path:
-    """Return the existing main checkout if any layout matches; else the canonical new path."""
+def ensure_main_path(*, repo_path: Path, name: str, prefix: bool) -> Path:
+    """Return the existing main checkout if any known layout matches; else the canonical new path."""
     for candidate in (
-        repo_path / main_dir_name(name=name),
+        repo_path / f"{name.lower()}-main",
         repo_path / f"{repo_path.name.lower()}-main",
         repo_path / "main",
     ):
         if candidate.exists():
             return candidate
-    return repo_path / main_dir_name(name=name)
+    return repo_path / main_dir_name(name=name, prefix=prefix)
 
 
 def discover_repos(*, base_path: Path) -> list[RepoDir]:

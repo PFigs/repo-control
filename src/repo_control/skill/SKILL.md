@@ -31,6 +31,7 @@ skip_repos = []                    # ["owner/repo", ...]
 auto_install = true                # run mise install / uv sync / npm install in fresh worktrees
 auto_trust_mise = true             # `mise trust` before `mise install` to skip its prompt
 worktree_layout = "hierarchical"   # "hierarchical" (.worktrees/) or "flat" (siblings)
+prefix_worktrees = true            # name folders <repo-lower>-main / <repo-lower>-<pr>-<branch>
 ```
 
 ## Preflight (once per session)
