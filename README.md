@@ -4,13 +4,13 @@ Mirror every open GitHub PR you've authored as a per-repo cluster of git worktre
 
 ```
 <base_path>/
-  Backend-control/
+  webapp-control/
     main/                        # always kept, fast-forwarded each sync
-    2851-fix_parser_foo/         # one worktree per open PR
-    2850-fix_data_ingestion_fmt/
-  metering-sdk-control/
+    142-fix_navbar_overflow/     # one worktree per open PR
+    141-add_dark_mode/
+  cli-tool-control/
     main/
-    522-feat_android_mercado_libre_br/
+    37-bump_python_to_312/
 ```
 
 A single daily `repo-control sync` clones missing repos, creates worktrees for new PRs, refreshes existing ones, and removes worktrees whose PRs were merged/closed (only if the worktree is clean). First creation runs `mise install` / `uv sync` / `npm install` automatically when those manifests exist.
