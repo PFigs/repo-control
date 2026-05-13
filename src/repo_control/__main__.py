@@ -26,7 +26,13 @@ def main() -> int:
         description="Mirror your open GitHub PRs as per-repo worktree folders under a base path.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("sync", help="Refresh worktrees from open PRs")
+    sync_p = sub.add_parser("sync", help="Refresh worktrees from open PRs")
+    sync_p.add_argument(
+        "repo",
+        nargs="?",
+        default=None,
+        help="Limit sync to one repo (owner/name or GitHub URL); default: all authored PRs",
+    )
     sub.add_parser("list", help="Show all tracked worktrees")
     open_p = sub.add_parser("open", help="Open a PR's worktree in the IDE")
     open_p.add_argument("pr", help="PR number (or owner/repo#N for disambiguation)")
@@ -51,7 +57,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.cmd == "sync":
-            return cmd_sync()
+            return cmd_sync(repo_arg=args.repo)
         if args.cmd == "list":
             return cmd_list()
         if args.cmd == "open":
@@ -68,7 +74,7 @@ def main() -> int:
     return 0
 
 
-def cmd_sync() -> int:
+def cmd_sync(*, repo_arg: str | None = None) -> int:
     gh.check_auth()
     if not config.exists():
         print("No config found; running first-run setup.\n")
@@ -81,10 +87,16 @@ def cmd_sync() -> int:
     base = config.base_path(cfg=cfg)
     base.mkdir(parents=True, exist_ok=True)
 
+    repo_filter = _parse_repo_arg(value=repo_arg) if repo_arg else None
+    if repo_arg and repo_filter is None:
+        raise ValueError(f"could not parse {repo_arg!r} as owner/name or GitHub URL")
+
     prs = gh.list_open_prs()
     desired: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
     for pr in prs:
         if pr.base_slug in skip:
+            continue
+        if repo_filter is not None and (pr.base_owner, pr.base_repo) != repo_filter:
             continue
         desired.setdefault((pr.base_owner, pr.base_repo), {})[pr.number] = pr
 
@@ -143,6 +155,8 @@ def cmd_sync() -> int:
             setup_steps[wt_path] = setup.run_init(worktree_path=wt_path, cfg=cfg)
 
     for repo in state.discover_repos(base_path=base):
+        if repo_filter is not None and (repo.owner, repo.name) != repo_filter:
+            continue
         wanted = desired.get((repo.owner, repo.name), {})
         wanted_paths = {
             repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
@@ -254,6 +268,18 @@ def cmd_clean(*, force: bool) -> int:
         git.worktree_remove(repo_path=main_path, target=wt_path)
         print(f"removed {wt_path}")
     return 0
+
+
+def _parse_repo_arg(*, value: str) -> tuple[str, str] | None:
+    candidate = value.strip()
+    parsed = git.parse_owner_repo(url=candidate)
+    if parsed is not None:
+        return parsed
+    cleaned = candidate.removesuffix(".git").strip("/")
+    parts = cleaned.split("/")
+    if len(parts) == 2 and all(parts):
+        return parts[0], parts[1]
+    return None
 
 
 def _prompt(*, label: str, default: str) -> str:
