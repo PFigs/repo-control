@@ -10,13 +10,13 @@ For every open PR the user has authored on GitHub, the `repo-control` CLI scaffo
 
 ```
 <base_path>/
-  Backend-control/
+  webapp-control/
     main/                        # always kept
-    2851-fix_parser_foo/         # one worktree per open PR
-    2850-fix_data_ingestion_fmt/
-  metering-sdk-control/
+    142-fix_navbar_overflow/     # one worktree per open PR
+    141-add_dark_mode/
+  cli-tool-control/
     main/
-    522-feat_android_mercado_libre_br/
+    37-bump_python_to_312/
 ```
 
 Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). Created interactively by `repo-control setup` or on first `sync`.
