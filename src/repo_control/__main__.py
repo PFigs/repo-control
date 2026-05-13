@@ -128,8 +128,20 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 continue
         if not main_path.exists():
             print(f"cloning {owner}/{name} ...")
-            main_path.parent.mkdir(parents=True, exist_ok=True)
-            git.clone(owner=owner, name=name, target=main_path)
+            if cfg["bare_repo"]:
+                git_dir = repo_path / ".git"
+                if not git_dir.exists():
+                    git.clone_bare(owner=owner, name=name, git_dir=git_dir)
+                default = git.default_branch(repo_path=git_dir)
+                git.worktree_add_tracking(
+                    repo_path=git_dir,
+                    target=main_path,
+                    local_branch=default,
+                    upstream=f"origin/{default}",
+                )
+            else:
+                main_path.parent.mkdir(parents=True, exist_ok=True)
+                git.clone(owner=owner, name=name, target=main_path)
         git.fetch(repo_path=main_path)
         default = git.default_branch(repo_path=main_path)
         git.fast_forward(repo_path=main_path, branch=default)
@@ -407,6 +419,11 @@ def cmd_setup() -> int:
         default=cfg["prefix_worktrees"],
     )
 
+    bare_repo = _prompt_bool(
+        label="Store .git as a bare repo at <repo>/.git and treat main as a worktree?",
+        default=cfg["bare_repo"],
+    )
+
     Path(base).mkdir(parents=True, exist_ok=True)
     written = config.write(
         base_path=base,
@@ -416,6 +433,7 @@ def cmd_setup() -> int:
         auto_trust_mise=auto_trust_mise,
         worktree_layout=layout_choice,
         prefix_worktrees=prefix_worktrees,
+        bare_repo=bare_repo,
     )
     print(f"\nWrote {written}")
     return 0

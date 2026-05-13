@@ -33,6 +33,17 @@ def clone(*, owner: str, name: str, target: Path) -> None:
     _run(["gh", "repo", "clone", f"{owner}/{name}", str(target)])
 
 
+def clone_bare(*, owner: str, name: str, git_dir: Path) -> None:
+    git_dir.parent.mkdir(parents=True, exist_ok=True)
+    _run(["gh", "repo", "clone", f"{owner}/{name}", str(git_dir), "--", "--bare"])
+    _run(
+        ["git", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+        cwd=git_dir,
+    )
+    _run(["git", "fetch", "origin", "--prune"], cwd=git_dir)
+    _run(["git", "remote", "set-head", "origin", "--auto"], cwd=git_dir)
+
+
 def default_branch(*, repo_path: Path) -> str:
     result = _run(
         ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -117,13 +128,15 @@ def list_worktrees(*, repo_path: Path) -> list[Worktree]:
     current_path: Path | None = None
     current_branch: str | None = None
     detached = False
+    bare = False
     for line in result.stdout.splitlines():
         if line.startswith("worktree "):
-            if current_path is not None:
+            if current_path is not None and not bare:
                 out.append(Worktree(path=current_path, branch=None if detached else current_branch))
             current_path = Path(line.removeprefix("worktree ").strip())
             current_branch = None
             detached = False
+            bare = False
             continue
         if line.startswith("branch "):
             current_branch = line.removeprefix("branch ").strip().removeprefix("refs/heads/")
@@ -131,7 +144,10 @@ def list_worktrees(*, repo_path: Path) -> list[Worktree]:
         if line.startswith("detached"):
             detached = True
             continue
-    if current_path is not None:
+        if line == "bare":
+            bare = True
+            continue
+    if current_path is not None and not bare:
         out.append(Worktree(path=current_path, branch=None if detached else current_branch))
     return out
 
@@ -140,6 +156,28 @@ def worktree_add(*, repo_path: Path, target: Path, branch: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     _run(
         ["git", "worktree", "add", str(target), branch],
+        cwd=repo_path,
+    )
+
+
+def worktree_add_tracking(
+    *, repo_path: Path, target: Path, local_branch: str, upstream: str
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    exists = _run(
+        ["git", "rev-parse", "--verify", f"refs/heads/{local_branch}"],
+        cwd=repo_path,
+        check=False,
+    )
+    if exists.returncode == 0:
+        _run(["git", "worktree", "add", str(target), local_branch], cwd=repo_path)
+    else:
+        _run(
+            ["git", "worktree", "add", "-b", local_branch, str(target), upstream],
+            cwd=repo_path,
+        )
+    _run(
+        ["git", "branch", f"--set-upstream-to={upstream}", local_branch],
         cwd=repo_path,
     )
 
