@@ -17,6 +17,8 @@ DEFAULTS: dict = {
     "base_path": str(xdg_data_home() / "repo-control"),
     "ide": "idea",
     "skip_repos": [],
+    "auto_install": True,
+    "auto_trust_mise": True,
 }
 
 
@@ -37,11 +39,24 @@ def load() -> dict:
     return {**DEFAULTS, **data}
 
 
-def write(*, base_path: str, ide: str, skip_repos: list[str]) -> Path:
+def write(
+    *,
+    base_path: str,
+    ide: str,
+    skip_repos: list[str],
+    auto_install: bool = True,
+    auto_trust_mise: bool = True,
+) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     skip_repr = ", ".join(f'"{r}"' for r in skip_repos)
-    path.write_text(f'base_path = "{base_path}"\nide = "{ide}"\nskip_repos = [{skip_repr}]\n')
+    path.write_text(
+        f'base_path = "{base_path}"\n'
+        f'ide = "{ide}"\n'
+        f"skip_repos = [{skip_repr}]\n"
+        f"auto_install = {str(auto_install).lower()}\n"
+        f"auto_trust_mise = {str(auto_trust_mise).lower()}\n"
+    )
     return path
 
 
