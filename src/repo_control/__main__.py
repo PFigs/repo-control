@@ -140,7 +140,7 @@ def cmd_sync() -> int:
                 git.fetch(repo_path=main_path, refspec=pr.head_branch)
             git.worktree_add(repo_path=main_path, target=wt_path, branch=local_branch)
             created.append(wt_path)
-            setup_steps[wt_path] = setup.run_init(worktree_path=wt_path)
+            setup_steps[wt_path] = setup.run_init(worktree_path=wt_path, cfg=cfg)
 
     for repo in state.discover_repos(base_path=base):
         wanted = desired.get((repo.owner, repo.name), {})
@@ -264,6 +264,17 @@ def _prompt(*, label: str, default: str) -> str:
     return raw or default
 
 
+def _prompt_bool(*, label: str, default: bool) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    try:
+        raw = input(f"{label} [{suffix}]: ").strip().lower()
+    except EOFError:
+        return default
+    if not raw:
+        return default
+    return raw in {"y", "yes", "true", "1"}
+
+
 def cmd_setup() -> int:
     cfg = config.load()
     print(f"Writing config to {config.config_path()}\n")
@@ -294,8 +305,25 @@ def cmd_setup() -> int:
     )
     skip_repos = [item.strip() for item in skip_raw.split(",") if item.strip()]
 
+    auto_install = _prompt_bool(
+        label="Auto-run installers (mise install / uv sync / npm install) in fresh worktrees?",
+        default=cfg["auto_install"],
+    )
+    auto_trust_mise = False
+    if auto_install:
+        auto_trust_mise = _prompt_bool(
+            label="Auto-trust mise.toml in fresh worktrees (skips mise's trust prompt)?",
+            default=cfg["auto_trust_mise"],
+        )
+
     Path(base).mkdir(parents=True, exist_ok=True)
-    written = config.write(base_path=base, ide=ide_choice, skip_repos=skip_repos)
+    written = config.write(
+        base_path=base,
+        ide=ide_choice,
+        skip_repos=skip_repos,
+        auto_install=auto_install,
+        auto_trust_mise=auto_trust_mise,
+    )
     print(f"\nWrote {written}")
     return 0
 
