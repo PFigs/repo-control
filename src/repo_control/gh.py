@@ -82,7 +82,9 @@ def list_open_prs() -> list[OpenPR]:
                 base_repo=node["baseRepository"]["name"],
                 head_branch=node["headRefName"],
                 is_fork=bool(node["isCrossRepository"]),
-                fork_clone_url=(f"{head_repo['url']}.git" if node["isCrossRepository"] and head_repo else None),
+                fork_clone_url=(
+                    f"{head_repo['url']}.git" if node["isCrossRepository"] and head_repo else None
+                ),
             )
         )
     return out
