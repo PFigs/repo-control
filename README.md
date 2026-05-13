@@ -49,7 +49,7 @@ XDG-conformant paths:
 
 ```toml
 base_path = "/home/<user>/.local/share/repo-control"
-ide = "idea"                   # or "code"
+ide = "idea"                   # any binary on PATH; suggestions: idea, code, zed
 skip_repos = []                # ["owner/repo", ...] to ignore
 ```
 
