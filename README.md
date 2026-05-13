@@ -17,10 +17,30 @@ A single daily `repo-control sync` clones missing repos, creates worktrees for n
 
 ## Install
 
+From PyPI:
+
 ```bash
-uv tool install --editable "/path/to/repo-control"   # or `uv tool install repo-control` once published
-repo-control setup                                   # interactive config (also auto-triggered on first sync)
-repo-control install-skill                           # symlinks the bundled Claude skill into ~/.claude/skills/
+uv tool install repo-control
+```
+
+Or with pipx / pip:
+
+```bash
+pipx install repo-control
+# pip install --user repo-control
+```
+
+From a local checkout (editable):
+
+```bash
+uv tool install --editable "/path/to/repo-control"
+```
+
+Then:
+
+```bash
+repo-control setup           # interactive config (also auto-triggered on first sync)
+repo-control install-skill   # symlinks the bundled Claude skill into ~/.claude/skills/
 ```
 
 Requires `gh` (authenticated) and `uv` on PATH. Python 3.12+.
@@ -49,7 +69,7 @@ XDG-conformant paths:
 
 ```toml
 base_path = "/home/<user>/.local/share/repo-control"
-ide = "idea"                   # or "code"
+ide = "idea"                   # any binary on PATH; suggestions: idea, code, zed
 skip_repos = []                # ["owner/repo", ...] to ignore
 ```
 

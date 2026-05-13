@@ -23,7 +23,7 @@ Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). C
 
 ```toml
 base_path = "/home/<user>/.local/share/repo-control"
-ide = "idea"          # or "code"
+ide = "idea"          # any binary on PATH; suggestions: idea, code, zed
 skip_repos = []       # ["owner/repo", ...]
 ```
 
@@ -64,7 +64,7 @@ Never auto-rerun on failure. Never run `clean` as a follow-up unless the user as
 
 ## open
 
-If the user's reference is ambiguous (e.g. "open the parser fix"), run `repo-control list` first and show matches, then ask which one. Once the PR is unambiguous, invoke `repo-control open <pr>`. Pass `--ide=code` or `--ide=idea` to override the configured default for one call.
+If the user's reference is ambiguous (e.g. "open the parser fix"), run `repo-control list` first and show matches, then ask which one. Once the PR is unambiguous, invoke `repo-control open <pr>`. Pass `--ide=<binary>` (e.g. `code`, `idea`, `zed`, or any command on PATH; quote to include args) to override the configured default for one call.
 
 ## clean
 

@@ -1,5 +1,7 @@
 import argparse
 import os
+import shlex
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +30,11 @@ def main() -> int:
     sub.add_parser("list", help="Show all tracked worktrees")
     open_p = sub.add_parser("open", help="Open a PR's worktree in the IDE")
     open_p.add_argument("pr", help="PR number (or owner/repo#N for disambiguation)")
-    open_p.add_argument("--ide", choices=sorted(ide.COMMANDS), default=None)
+    open_p.add_argument(
+        "--ide",
+        default=None,
+        help=f"Editor command (e.g. {', '.join(ide.KNOWN)}, or any binary on PATH; quote to pass args)",
+    )
     clean_p = sub.add_parser("clean", help="Remove stale worktrees")
     clean_p.add_argument("--force", action="store_true", help="Also drop dirty worktrees (with confirmation)")
     install_p = sub.add_parser("install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/")
@@ -252,16 +258,13 @@ def cmd_setup() -> int:
         default=cfg["base_path"],
     ))
 
-    ide_choices = sorted(ide.COMMANDS)
-    ide_choice = cfg["ide"]
-    while True:
-        ide_choice = _prompt(
-            label=f"Default IDE ({'/'.join(ide_choices)})",
-            default=ide_choice,
-        )
-        if ide_choice in ide_choices:
-            break
-        print(f"  pick one of {ide_choices}")
+    ide_choice = _prompt(
+        label=f"Default editor (suggestions: {', '.join(ide.KNOWN)}; any binary on PATH works, quote to pass args)",
+        default=cfg["ide"],
+    )
+    binary = shlex.split(ide_choice)[0] if ide_choice else ""
+    if binary and shutil.which(binary) is None:
+        print(f"  warning: {binary!r} not on PATH — saving anyway; install or fix before `open`")
 
     skip_raw = _prompt(
         label="Repos to skip (comma-separated owner/repo)",
