@@ -13,7 +13,9 @@ class Worktree:
     branch: str | None  # None for detached HEAD
 
 
-def _run(args: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+def _run(
+    args: list[str], *, cwd: Path | None = None, check: bool = True
+) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             args,
@@ -67,7 +69,7 @@ def parse_owner_repo(*, url: str) -> tuple[str, str] | None:
         idx = cleaned.find(marker)
         if idx == -1:
             continue
-        tail = cleaned[idx + len(marker):]
+        tail = cleaned[idx + len(marker) :]
         parts = tail.split("/")
         if len(parts) < 2:
             return None

@@ -33,13 +33,19 @@ def main() -> int:
     open_p.add_argument(
         "--ide",
         default=None,
-        help=f"Editor command (e.g. {', '.join(ide.KNOWN)}, or any binary on PATH; quote to pass args)",
+        help=f"Editor command ({', '.join(ide.KNOWN)}, or any binary on PATH; quote for args)",
     )
     clean_p = sub.add_parser("clean", help="Remove stale worktrees")
-    clean_p.add_argument("--force", action="store_true", help="Also drop dirty worktrees (with confirmation)")
-    install_p = sub.add_parser("install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/")
+    clean_p.add_argument(
+        "--force", action="store_true", help="Also drop dirty worktrees (with confirmation)"
+    )
+    install_p = sub.add_parser(
+        "install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/"
+    )
     install_p.add_argument("--uninstall", action="store_true", help="Remove the symlink")
-    install_p.add_argument("--force", action="store_true", help="Replace an existing non-symlink at the destination")
+    install_p.add_argument(
+        "--force", action="store_true", help="Replace an existing non-symlink at the destination"
+    )
     sub.add_parser("setup", help="Interactive first-run configuration (or re-configure later)")
 
     args = parser.parse_args()
@@ -138,7 +144,10 @@ def cmd_sync() -> int:
 
     for repo in state.discover_repos(base_path=base):
         wanted = desired.get((repo.owner, repo.name), {})
-        wanted_paths = {repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch) for pr in wanted.values()}
+        wanted_paths = {
+            repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
+            for pr in wanted.values()
+        }
         wanted_paths.add(repo.main_path)
         default = git.default_branch(repo_path=repo.main_path)
         for worktree in state.existing_worktrees(repo=repo):
@@ -210,7 +219,13 @@ def cmd_clean(*, force: bool) -> int:
             if wt_path in wanted:
                 continue
             if git.is_clean(worktree_path=wt_path):
-                stale_clean.append((repo.main_path, wt_path, worktree.branch if worktree.branch != default else None))
+                stale_clean.append(
+                    (
+                        repo.main_path,
+                        wt_path,
+                        worktree.branch if worktree.branch != default else None,
+                    )
+                )
             else:
                 stale_dirty.append((repo.main_path, wt_path))
 
@@ -253,13 +268,20 @@ def cmd_setup() -> int:
     cfg = config.load()
     print(f"Writing config to {config.config_path()}\n")
 
-    base = os.path.expanduser(_prompt(
-        label="Base path (where <repo>-control/ folders live)",
-        default=cfg["base_path"],
-    ))
+    print(
+        "Workspace path: each open PR you author becomes a worktree under "
+        "<workspace>/<repo>-control/<pr>-<branch>/, alongside <repo>-control/main/.\n"
+        "Tip: ~/repos is a fine pick if you want everything in your home."
+    )
+    base = os.path.expanduser(
+        _prompt(
+            label="Workspace path",
+            default=cfg["base_path"],
+        )
+    )
 
     ide_choice = _prompt(
-        label=f"Default editor (suggestions: {', '.join(ide.KNOWN)}; any binary on PATH works, quote to pass args)",
+        label=f"Default editor ({', '.join(ide.KNOWN)}, or any binary on PATH; quote for args)",
         default=cfg["ide"],
     )
     binary = shlex.split(ide_choice)[0] if ide_choice else ""
@@ -306,8 +328,7 @@ def cmd_install_skill(*, uninstall: bool, force: bool) -> int:
 
     if not source.exists():
         print(
-            f"bundled skill source not found at {source}; "
-            "is this an editable install?",
+            f"bundled skill source not found at {source}; is this an editable install?",
             file=sys.stderr,
         )
         return 1
@@ -338,6 +359,7 @@ def cmd_install_skill(*, uninstall: bool, force: bool) -> int:
 
 def _rmtree(path: Path) -> None:
     import shutil
+
     shutil.rmtree(path)
 
 
@@ -354,23 +376,27 @@ def _collect_rows() -> list[WorktreeRow]:
         for worktree in state.existing_worktrees(repo=repo):
             wt_path = worktree.path
             if wt_path.resolve() == repo.main_path.resolve():
-                rows.append(WorktreeRow(
-                    repo_slug=repo.slug,
-                    pr_number=None,
-                    branch=default,
-                    path=wt_path,
-                    status="main",
-                ))
+                rows.append(
+                    WorktreeRow(
+                        repo_slug=repo.slug,
+                        pr_number=None,
+                        branch=default,
+                        path=wt_path,
+                        status="main",
+                    )
+                )
                 continue
             pr_number = _pr_number_from_dir(name=wt_path.name)
             status = "clean" if git.is_clean(worktree_path=wt_path) else "dirty"
-            rows.append(WorktreeRow(
-                repo_slug=repo.slug,
-                pr_number=pr_number,
-                branch=worktree.branch,
-                path=wt_path,
-                status=status,
-            ))
+            rows.append(
+                WorktreeRow(
+                    repo_slug=repo.slug,
+                    pr_number=pr_number,
+                    branch=worktree.branch,
+                    path=wt_path,
+                    status=status,
+                )
+            )
     return rows
 
 

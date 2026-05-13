@@ -41,11 +41,7 @@ def write(*, base_path: str, ide: str, skip_repos: list[str]) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     skip_repr = ", ".join(f'"{r}"' for r in skip_repos)
-    path.write_text(
-        f'base_path = "{base_path}"\n'
-        f'ide = "{ide}"\n'
-        f"skip_repos = [{skip_repr}]\n"
-    )
+    path.write_text(f'base_path = "{base_path}"\nide = "{ide}"\nskip_repos = [{skip_repr}]\n')
     return path
 
 
