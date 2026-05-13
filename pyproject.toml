@@ -1,6 +1,6 @@
 [project]
 name = "repo-control"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Mirror open GitHub PRs as per-repo git worktree clusters"
 requires-python = ">=3.12"
 dependencies = []
@@ -9,8 +9,11 @@ dependencies = []
 repo-control = "repo_control.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs>=0.4,<1"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repo_control"]
