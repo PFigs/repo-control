@@ -268,9 +268,14 @@ def cmd_setup() -> int:
     cfg = config.load()
     print(f"Writing config to {config.config_path()}\n")
 
+    print(
+        "Workspace path: each open PR you author becomes a worktree under "
+        "<workspace>/<repo>-control/<pr>-<branch>/, alongside <repo>-control/main/.\n"
+        "Tip: ~/repos is a fine pick if you want everything in your home."
+    )
     base = os.path.expanduser(
         _prompt(
-            label="Base path (where <repo>-control/ folders live)",
+            label="Workspace path",
             default=cfg["base_path"],
         )
     )
