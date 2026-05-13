@@ -11,16 +11,16 @@ For every open PR the user has authored on GitHub, the `repo-control` CLI scaffo
 ```
 <base_path>/
   webapp/                        # hierarchical layout (default)
-    main/
+    webapp-main/
     .worktrees/
-      142-fix_navbar_overflow/
-      141-add_dark_mode/
+      webapp-142-fix-navbar-overflow/
+      webapp-141-add-dark-mode/
   cli-tool/                      # flat layout
-    main/
-    37-bump_python_to_312/
+    cli-tool-main/
+    cli-tool-37-bump-python-to-312/
 ```
 
-Pre-existing `<repo>-control/` directories from older versions are reused in place; only new clones use the bare `<repo>/` name.
+Every worktree folder is prefixed with the repo name (lowercased). The repo dir itself is also lowercased on new clones. Pre-existing `<repo>-control/` or `<repo>/main/` layouts from older versions are reused in place.
 
 Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). Created interactively by `repo-control setup` or on first `sync`.
 

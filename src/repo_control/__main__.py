@@ -114,7 +114,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
 
     for (owner, name), prs_by_num in sorted(desired.items()):
         repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
-        main_path = repo_path / "main"
+        main_path = state.ensure_main_path(repo_path=repo_path, name=name)
         if repo_path.exists() and main_path.exists():
             existing = git.remote_url(repo_path=main_path)
             existing_parsed = git.parse_owner_repo(url=existing) if existing else None
@@ -126,6 +126,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 continue
         if not main_path.exists():
             print(f"cloning {owner}/{name} ...")
+            main_path.parent.mkdir(parents=True, exist_ok=True)
             git.clone(owner=owner, name=name, target=main_path)
         git.fetch(repo_path=main_path)
         default = git.default_branch(repo_path=main_path)
@@ -134,6 +135,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         for pr_number, pr in sorted(prs_by_num.items()):
             wt_path = state.worktree_path(
                 repo_path=repo_path,
+                name=name,
                 pr_number=pr_number,
                 branch=pr.head_branch,
                 layout=cfg["worktree_layout"],
@@ -172,6 +174,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         wanted_paths = {
             state.worktree_path(
                 repo_path=repo.path,
+                name=repo.name,
                 pr_number=pr.number,
                 branch=pr.head_branch,
                 layout=cfg["worktree_layout"],
@@ -236,6 +239,7 @@ def cmd_clean(*, force: bool) -> int:
         repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
         wt = state.worktree_path(
             repo_path=repo_path,
+            name=pr.base_repo,
             pr_number=pr.number,
             branch=pr.head_branch,
             layout=cfg["worktree_layout"],
