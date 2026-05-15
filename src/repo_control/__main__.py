@@ -147,6 +147,12 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         default = git.default_branch(repo_path=main_path)
         git.fast_forward(repo_path=main_path, branch=default)
 
+        existing_by_branch = {
+            wt.branch: wt.path
+            for wt in git.list_worktrees(repo_path=main_path)
+            if wt.branch is not None
+        }
+
         for pr_number, pr in sorted(prs_by_num.items()):
             wt_path = state.worktree_path(
                 repo_path=repo_path,
@@ -158,6 +164,21 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             )
             wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
+            existing_path = existing_by_branch.get(local_branch)
+            if existing_path is not None and existing_path.resolve() != wt_path.resolve():
+                if git.is_clean(worktree_path=existing_path):
+                    git.worktree_move(
+                        repo_path=main_path,
+                        source=existing_path,
+                        target=wt_path,
+                    )
+                    existing_by_branch[local_branch] = wt_path
+                else:
+                    print(
+                        f"warning: {local_branch} at {existing_path} is dirty; "
+                        f"refreshing in place instead of moving to {wt_path}"
+                    )
+                    wt_path = existing_path
             hook_ctx = {
                 "owner": owner,
                 "name": name,

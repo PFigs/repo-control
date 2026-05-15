@@ -189,6 +189,14 @@ def worktree_remove(*, repo_path: Path, target: Path) -> None:
     )
 
 
+def worktree_move(*, repo_path: Path, source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _run(
+        ["git", "worktree", "move", str(source), str(target)],
+        cwd=repo_path,
+    )
+
+
 def delete_branch(*, repo_path: Path, branch: str) -> None:
     _run(["git", "branch", "-D", branch], cwd=repo_path, check=False)
 
