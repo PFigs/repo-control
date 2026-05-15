@@ -59,7 +59,7 @@ def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
 
 
 def ensure_main_path(*, repo_path: Path, name: str, prefix: bool) -> Path:
-    """Return the existing main checkout if any known layout matches; else the canonical new path."""
+    """Return existing main checkout if a known layout matches; else the canonical new path."""
     for candidate in (
         repo_path / f"{name.lower()}-main",
         repo_path / f"{repo_path.name.lower()}-main",

@@ -406,16 +406,26 @@ def cmd_setup() -> int:
             default=cfg["auto_trust_mise"],
         )
 
-    layout_choice = _prompt(
-        label="Worktree layout (hierarchical: <repo>/.worktrees/<pr>-<branch>; flat: <repo>/<pr>-<branch>)",
-        default=cfg["worktree_layout"],
-    ).strip().lower()
+    layout_choice = (
+        _prompt(
+            label=(
+                "Worktree layout (hierarchical: <repo>/.worktrees/<pr>-<branch>; "
+                "flat: <repo>/<pr>-<branch>)"
+            ),
+            default=cfg["worktree_layout"],
+        )
+        .strip()
+        .lower()
+    )
     if layout_choice not in {"hierarchical", "flat"}:
         print(f"  unknown layout {layout_choice!r}; using 'hierarchical'")
         layout_choice = "hierarchical"
 
     prefix_worktrees = _prompt_bool(
-        label="Prefix worktree folders with the lowercase repo name (e.g. webapp-main, webapp-142-fix)?",
+        label=(
+            "Prefix worktree folders with the lowercase repo name "
+            "(e.g. webapp-main, webapp-142-fix)?"
+        ),
         default=cfg["prefix_worktrees"],
     )
 
