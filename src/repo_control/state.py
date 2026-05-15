@@ -1,9 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from repo_control import git
 
-REPO_DIR_SUFFIX = "-control"
+LEGACY_REPO_DIR_SUFFIX = "-control"
+WORKTREES_SUBDIR = ".worktrees"
 
 
 @dataclass(frozen=True)
@@ -11,10 +12,7 @@ class RepoDir:
     owner: str
     name: str
     path: Path
-
-    @property
-    def main_path(self) -> Path:
-        return self.path / "main"
+    main_path: Path = field()
 
     @property
     def slug(self) -> str:
@@ -25,30 +23,63 @@ def slugify_branch(*, branch: str) -> str:
     return branch.replace("/", "-").replace(" ", "-")
 
 
-def repo_dir_name(*, name: str) -> str:
-    return f"{name}{REPO_DIR_SUFFIX}"
+def main_dir_name(*, name: str, prefix: bool) -> str:
+    return f"{name.lower()}-main" if prefix else "main"
 
 
-def worktree_dir_name(*, pr_number: int, branch: str) -> str:
-    return f"{pr_number}-{slugify_branch(branch=branch)}"
+def worktree_dir_name(*, name: str, pr_number: int, branch: str, prefix: bool) -> str:
+    suffix = f"{pr_number}-{slugify_branch(branch=branch)}"
+    return f"{name.lower()}-{suffix}" if prefix else suffix
+
+
+def worktree_path(
+    *,
+    repo_path: Path,
+    name: str,
+    pr_number: int,
+    branch: str,
+    layout: str,
+    prefix: bool,
+) -> Path:
+    folder = worktree_dir_name(name=name, pr_number=pr_number, branch=branch, prefix=prefix)
+    if layout == "hierarchical":
+        return repo_path / WORKTREES_SUBDIR / folder
+    return repo_path / folder
 
 
 def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
-    return base_path / repo_dir_name(name=name)
+    """Prefer an existing legacy dir on disk; otherwise return the canonical lowercase path."""
+    for candidate in (
+        base_path / f"{name}{LEGACY_REPO_DIR_SUFFIX}",
+        base_path / name,
+    ):
+        if candidate.exists():
+            return candidate
+    return base_path / name.lower()
+
+
+def ensure_main_path(*, repo_path: Path, name: str, prefix: bool) -> Path:
+    """Return existing main checkout if a known layout matches; else the canonical new path."""
+    for candidate in (
+        repo_path / f"{name.lower()}-main",
+        repo_path / f"{repo_path.name.lower()}-main",
+        repo_path / "main",
+    ):
+        if candidate.exists():
+            return candidate
+    return repo_path / main_dir_name(name=name, prefix=prefix)
 
 
 def discover_repos(*, base_path: Path) -> list[RepoDir]:
-    """Walk <base>/*-control/ dirs and recover (owner, name) from each main/'s remote."""
+    """Walk <base>/<*>/ dirs and recover (owner, name) from each main checkout's remote."""
     if not base_path.exists():
         return []
     out: list[RepoDir] = []
     for child in sorted(base_path.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
-        if not child.name.endswith(REPO_DIR_SUFFIX):
-            continue
-        main = child / "main"
-        if not main.exists():
+        main = _find_main_in(child)
+        if main is None:
             continue
         url = git.remote_url(repo_path=main)
         if url is None:
@@ -57,8 +88,18 @@ def discover_repos(*, base_path: Path) -> list[RepoDir]:
         if parsed is None:
             continue
         owner, name = parsed
-        out.append(RepoDir(owner=owner, name=name, path=child))
+        out.append(RepoDir(owner=owner, name=name, path=child, main_path=main))
     return out
+
+
+def _find_main_in(child: Path) -> Path | None:
+    for candidate in (
+        child / f"{child.name.lower()}-main",
+        child / "main",
+    ):
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def existing_worktrees(*, repo: RepoDir) -> list[git.Worktree]:

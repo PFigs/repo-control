@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from repo_control import config, gh, git, ide, setup, state
+from repo_control import config, gh, git, ide, picker, setup, state
 
 SKILL_NAME = "repo-control"
 
@@ -26,7 +26,13 @@ def main() -> int:
         description="Mirror your open GitHub PRs as per-repo worktree folders under a base path.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("sync", help="Refresh worktrees from open PRs")
+    sync_p = sub.add_parser("sync", help="Refresh worktrees from open PRs")
+    sync_p.add_argument(
+        "repo",
+        nargs="?",
+        default=None,
+        help="Limit sync to one repo (owner/name or GitHub URL); default: all authored PRs",
+    )
     sub.add_parser("list", help="Show all tracked worktrees")
     open_p = sub.add_parser("open", help="Open a PR's worktree in the IDE")
     open_p.add_argument("pr", help="PR number (or owner/repo#N for disambiguation)")
@@ -51,7 +57,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.cmd == "sync":
-            return cmd_sync()
+            return cmd_sync(repo_arg=args.repo)
         if args.cmd == "list":
             return cmd_list()
         if args.cmd == "open":
@@ -68,7 +74,7 @@ def main() -> int:
     return 0
 
 
-def cmd_sync() -> int:
+def cmd_sync(*, repo_arg: str | None = None) -> int:
     gh.check_auth()
     if not config.exists():
         print("No config found; running first-run setup.\n")
@@ -81,12 +87,24 @@ def cmd_sync() -> int:
     base = config.base_path(cfg=cfg)
     base.mkdir(parents=True, exist_ok=True)
 
+    single_repo = _parse_repo_arg(value=repo_arg) if repo_arg else None
+    if repo_arg and single_repo is None:
+        raise ValueError(f"could not parse {repo_arg!r} as owner/name or GitHub URL")
+
     prs = gh.list_open_prs()
-    desired: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
+    by_repo: dict[tuple[str, str], dict[int, gh.OpenPR]] = {}
     for pr in prs:
         if pr.base_slug in skip:
             continue
-        desired.setdefault((pr.base_owner, pr.base_repo), {})[pr.number] = pr
+        if single_repo is not None and (pr.base_owner, pr.base_repo) != single_repo:
+            continue
+        by_repo.setdefault((pr.base_owner, pr.base_repo), {})[pr.number] = pr
+
+    selected_repos = _select_repos_interactive(by_repo=by_repo, single_repo=single_repo)
+    if selected_repos is None:
+        print("sync cancelled")
+        return 0
+    desired = {key: prs_by_num for key, prs_by_num in by_repo.items() if key in selected_repos}
 
     created: list[Path] = []
     refreshed: list[Path] = []
@@ -96,7 +114,9 @@ def cmd_sync() -> int:
 
     for (owner, name), prs_by_num in sorted(desired.items()):
         repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
-        main_path = repo_path / "main"
+        main_path = state.ensure_main_path(
+            repo_path=repo_path, name=name, prefix=cfg["prefix_worktrees"]
+        )
         if repo_path.exists() and main_path.exists():
             existing = git.remote_url(repo_path=main_path)
             existing_parsed = git.parse_owner_repo(url=existing) if existing else None
@@ -108,14 +128,34 @@ def cmd_sync() -> int:
                 continue
         if not main_path.exists():
             print(f"cloning {owner}/{name} ...")
-            git.clone(owner=owner, name=name, target=main_path)
+            if cfg["bare_repo"]:
+                git_dir = repo_path / ".git"
+                if not git_dir.exists():
+                    git.clone_bare(owner=owner, name=name, git_dir=git_dir)
+                default = git.default_branch(repo_path=git_dir)
+                git.worktree_add_tracking(
+                    repo_path=git_dir,
+                    target=main_path,
+                    local_branch=default,
+                    upstream=f"origin/{default}",
+                )
+            else:
+                main_path.parent.mkdir(parents=True, exist_ok=True)
+                git.clone(owner=owner, name=name, target=main_path)
         git.fetch(repo_path=main_path)
         default = git.default_branch(repo_path=main_path)
         git.fast_forward(repo_path=main_path, branch=default)
 
         for pr_number, pr in sorted(prs_by_num.items()):
-            wt_name = state.worktree_dir_name(pr_number=pr_number, branch=pr.head_branch)
-            wt_path = repo_path / wt_name
+            wt_path = state.worktree_path(
+                repo_path=repo_path,
+                name=name,
+                pr_number=pr_number,
+                branch=pr.head_branch,
+                layout=cfg["worktree_layout"],
+                prefix=cfg["prefix_worktrees"],
+            )
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
             if wt_path.exists():
                 if pr.is_fork and pr.fork_clone_url:
@@ -143,9 +183,18 @@ def cmd_sync() -> int:
             setup_steps[wt_path] = setup.run_init(worktree_path=wt_path, cfg=cfg)
 
     for repo in state.discover_repos(base_path=base):
+        if (repo.owner, repo.name) not in selected_repos:
+            continue
         wanted = desired.get((repo.owner, repo.name), {})
         wanted_paths = {
-            repo.path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
+            state.worktree_path(
+                repo_path=repo.path,
+                name=repo.name,
+                pr_number=pr.number,
+                branch=pr.head_branch,
+                layout=cfg["worktree_layout"],
+                prefix=cfg["prefix_worktrees"],
+            )
             for pr in wanted.values()
         }
         wanted_paths.add(repo.main_path)
@@ -204,7 +253,14 @@ def cmd_clean(*, force: bool) -> int:
     for pr in prs:
         key = (pr.base_owner, pr.base_repo)
         repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
-        wt = repo_path / state.worktree_dir_name(pr_number=pr.number, branch=pr.head_branch)
+        wt = state.worktree_path(
+            repo_path=repo_path,
+            name=pr.base_repo,
+            pr_number=pr.number,
+            branch=pr.head_branch,
+            layout=cfg["worktree_layout"],
+            prefix=cfg["prefix_worktrees"],
+        )
         wanted_by_repo.setdefault(key, set()).add(wt.resolve())
 
     stale_clean: list[tuple[Path, Path, str | None]] = []
@@ -254,6 +310,40 @@ def cmd_clean(*, force: bool) -> int:
         git.worktree_remove(repo_path=main_path, target=wt_path)
         print(f"removed {wt_path}")
     return 0
+
+
+def _select_repos_interactive(
+    *,
+    by_repo: dict[tuple[str, str], dict[int, gh.OpenPR]],
+    single_repo: tuple[str, str] | None,
+) -> set[tuple[str, str]] | None:
+    """Show a picker when there's a real choice; otherwise return everything in by_repo."""
+    all_keys = set(by_repo.keys())
+    if single_repo is not None or len(by_repo) <= 1 or not sys.stdin.isatty():
+        return all_keys
+    choices = [
+        picker.Choice(key=f"{owner}/{name}", label=f"{owner}/{name} ({len(prs)} PRs)")
+        for (owner, name), prs in sorted(by_repo.items())
+    ]
+    chosen_keys = picker.select_multi(
+        title="Repos to sync:", choices=choices, default_selected=True
+    )
+    if chosen_keys is None:
+        return None
+    chosen_set = set(chosen_keys)
+    return {(owner, name) for owner, name in by_repo if f"{owner}/{name}" in chosen_set}
+
+
+def _parse_repo_arg(*, value: str) -> tuple[str, str] | None:
+    candidate = value.strip()
+    parsed = git.parse_owner_repo(url=candidate)
+    if parsed is not None:
+        return parsed
+    cleaned = candidate.removesuffix(".git").strip("/")
+    parts = cleaned.split("/")
+    if len(parts) == 2 and all(parts):
+        return parts[0], parts[1]
+    return None
 
 
 def _prompt(*, label: str, default: str) -> str:
@@ -316,6 +406,34 @@ def cmd_setup() -> int:
             default=cfg["auto_trust_mise"],
         )
 
+    layout_choice = (
+        _prompt(
+            label=(
+                "Worktree layout (hierarchical: <repo>/.worktrees/<pr>-<branch>; "
+                "flat: <repo>/<pr>-<branch>)"
+            ),
+            default=cfg["worktree_layout"],
+        )
+        .strip()
+        .lower()
+    )
+    if layout_choice not in {"hierarchical", "flat"}:
+        print(f"  unknown layout {layout_choice!r}; using 'hierarchical'")
+        layout_choice = "hierarchical"
+
+    prefix_worktrees = _prompt_bool(
+        label=(
+            "Prefix worktree folders with the lowercase repo name "
+            "(e.g. webapp-main, webapp-142-fix)?"
+        ),
+        default=cfg["prefix_worktrees"],
+    )
+
+    bare_repo = _prompt_bool(
+        label="Store .git as a bare repo at <repo>/.git and treat main as a worktree?",
+        default=cfg["bare_repo"],
+    )
+
     Path(base).mkdir(parents=True, exist_ok=True)
     written = config.write(
         base_path=base,
@@ -323,6 +441,9 @@ def cmd_setup() -> int:
         skip_repos=skip_repos,
         auto_install=auto_install,
         auto_trust_mise=auto_trust_mise,
+        worktree_layout=layout_choice,
+        prefix_worktrees=prefix_worktrees,
+        bare_repo=bare_repo,
     )
     print(f"\nWrote {written}")
     return 0

@@ -6,25 +6,32 @@ allowed-tools: Bash
 
 # repo-control
 
-For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a sibling `<repo>-control/` folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's `main/` worktree plus one worktree per open PR.
+For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a per-repo folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's `main/` worktree plus one worktree per open PR.
 
 ```
 <base_path>/
-  webapp-control/
-    main/                        # always kept
-    142-fix_navbar_overflow/     # one worktree per open PR
-    141-add_dark_mode/
-  cli-tool-control/
-    main/
-    37-bump_python_to_312/
+  webapp/                        # hierarchical layout (default)
+    webapp-main/
+    .worktrees/
+      webapp-142-fix-navbar-overflow/
+      webapp-141-add-dark-mode/
+  cli-tool/                      # flat layout
+    cli-tool-main/
+    cli-tool-37-bump-python-to-312/
 ```
+
+Every worktree folder is prefixed with the repo name (lowercased). The repo dir itself is also lowercased on new clones. Pre-existing `<repo>-control/` or `<repo>/main/` layouts from older versions are reused in place.
 
 Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). Created interactively by `repo-control setup` or on first `sync`.
 
 ```toml
 base_path = "/home/<user>/.local/share/repo-control"
-ide = "idea"          # any binary on PATH; suggestions: idea, code, zed
-skip_repos = []       # ["owner/repo", ...]
+ide = "idea"                       # any binary on PATH; suggestions: idea, code, zed
+skip_repos = []                    # ["owner/repo", ...]
+auto_install = true                # run mise install / uv sync / npm install in fresh worktrees
+auto_trust_mise = true             # `mise trust` before `mise install` to skip its prompt
+worktree_layout = "hierarchical"   # "hierarchical" (.worktrees/) or "flat" (siblings)
+prefix_worktrees = true            # name folders <repo-lower>-main / <repo-lower>-<pr>-<branch>
 ```
 
 ## Preflight (once per session)
@@ -47,6 +54,7 @@ Do not retry blindly. Do not bootstrap silently.
 | User says | Run |
 |---|---|
 | "sync my PRs", "sync repo-control", "refresh worktrees" | `repo-control sync` |
+| "sync just owner/repo", "sync this repo only" | `repo-control sync <owner/repo>` |
 | "list my worktrees", "what am I working on" | `repo-control list` |
 | "open PR 5432", "open the parser fix" (after resolving) | `repo-control open <pr>` |
 | "clean stale worktrees", "prune merged ones" | `repo-control clean` |
@@ -55,7 +63,7 @@ Do not retry blindly. Do not bootstrap silently.
 
 ## sync
 
-Run `repo-control sync` and show the summary verbatim. If no config exists yet, sync will auto-launch `setup` which is interactive — let it complete. After sync finishes, surface anything that needs the user's attention:
+Run `repo-control sync` and show the summary verbatim. When the user names a single repo (e.g. "sync just PFigs/repo-control" or pastes a GitHub URL), pass it as an argument: `repo-control sync PFigs/repo-control` — only that repo's worktrees are created/refreshed/cleaned; others are left untouched. Otherwise sync may show an interactive repo picker (arrows/space/enter) when multiple repos have open PRs — let it complete. If no config exists yet, sync will auto-launch `setup` which is interactive — let it complete. After sync finishes, surface anything that needs the user's attention:
 
 - Worktrees kept dirty (PR closed but uncommitted work present) — call them out by path.
 - Fork PRs that failed to fetch — print the error.
