@@ -197,20 +197,19 @@ def is_clean(*, worktree_path: Path) -> bool:
     status = _run(["git", "status", "--porcelain"], cwd=worktree_path)
     if status.stdout.strip():
         return False
-    stash = _run(["git", "stash", "list"], cwd=worktree_path)
-    if stash.stdout.strip():
-        return False
     head = _run(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree_path, check=False)
     if head.returncode != 0:
         return True
     branch = head.stdout.strip()
+    if _has_stash_for_branch(worktree_path=worktree_path, branch=branch):
+        return False
     upstream = _run(
         ["git", "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"],
         cwd=worktree_path,
         check=False,
     )
     if upstream.returncode != 0:
-        return False
+        return _all_commits_merged(worktree_path=worktree_path)
     ahead = _run(
         ["git", "rev-list", "--count", f"{upstream.stdout.strip()}..{branch}"],
         cwd=worktree_path,
@@ -218,4 +217,46 @@ def is_clean(*, worktree_path: Path) -> bool:
     )
     if ahead.returncode != 0:
         return True
-    return ahead.stdout.strip() == "0"
+    if ahead.stdout.strip() == "0":
+        return True
+    return _all_commits_merged(worktree_path=worktree_path)
+
+
+def _has_stash_for_branch(*, worktree_path: Path, branch: str) -> bool:
+    # `git stash list` shows stashes from every worktree sharing this .git;
+    # filter to the ones recorded against this branch so unrelated stashes
+    # on `main` don't make every feature worktree look dirty.
+    result = _run(
+        ["git", "stash", "list", "--format=%gs"],
+        cwd=worktree_path,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    for subject in result.stdout.splitlines():
+        subject = subject.strip()
+        for prefix in ("WIP on ", "On "):
+            if subject.startswith(prefix):
+                stash_branch = subject.removeprefix(prefix).split(":", 1)[0]
+                if stash_branch == branch:
+                    return True
+                break
+    return False
+
+
+def _all_commits_merged(*, worktree_path: Path) -> bool:
+    # True when every commit reachable from HEAD is patch-equivalent to a
+    # commit on the default branch — covers squash/rebase merges where
+    # `@{upstream}` is gone or hashes diverge but the work is on main.
+    try:
+        default = default_branch(repo_path=worktree_path)
+    except GitError:
+        return False
+    result = _run(
+        ["git", "cherry", f"origin/{default}", "HEAD"],
+        cwd=worktree_path,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    return not any(line.startswith("+") for line in result.stdout.splitlines())
