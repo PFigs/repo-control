@@ -111,6 +111,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
     removed: list[Path] = []
     kept_dirty: list[Path] = []
     setup_steps: dict[Path, list[str]] = {}
+    synced_steps: dict[Path, list[str]] = {}
 
     for (owner, name), prs_by_num in sorted(desired.items()):
         repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
@@ -157,6 +158,12 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             )
             wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
+            hook_ctx = {
+                "owner": owner,
+                "name": name,
+                "pr_number": pr_number,
+                "branch": local_branch,
+            }
             if wt_path.exists():
                 if pr.is_fork and pr.fork_clone_url:
                     git.fetch_fork(
@@ -168,6 +175,9 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 else:
                     git.fetch(repo_path=main_path, refspec=pr.head_branch)
                 refreshed.append(wt_path)
+                synced_steps[wt_path] = setup.run_post_sync(
+                    repo_path=repo_path, worktree_path=wt_path, ctx=hook_ctx
+                )
                 continue
             if pr.is_fork and pr.fork_clone_url:
                 git.fetch_fork(
@@ -180,7 +190,14 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 git.fetch(repo_path=main_path, refspec=pr.head_branch)
             git.worktree_add(repo_path=main_path, target=wt_path, branch=local_branch)
             created.append(wt_path)
-            setup_steps[wt_path] = setup.run_init(worktree_path=wt_path, cfg=cfg)
+            init_steps = setup.run_init(worktree_path=wt_path, cfg=cfg)
+            post_create_steps = setup.run_post_create(
+                repo_path=repo_path, worktree_path=wt_path, ctx=hook_ctx
+            )
+            post_sync_steps = setup.run_post_sync(
+                repo_path=repo_path, worktree_path=wt_path, ctx=hook_ctx
+            )
+            setup_steps[wt_path] = init_steps + post_create_steps + post_sync_steps
 
     for repo in state.discover_repos(base_path=base):
         if (repo.owner, repo.name) not in selected_repos:
@@ -219,6 +236,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         removed=removed,
         kept_dirty=kept_dirty,
         setup_steps=setup_steps,
+        synced_steps=synced_steps,
     )
     return 0
 
@@ -609,6 +627,7 @@ def _print_sync_summary(
     removed: list[Path],
     kept_dirty: list[Path],
     setup_steps: dict[Path, list[str]],
+    synced_steps: dict[Path, list[str]],
 ) -> None:
     print()
     print(f"created:  {len(created)}")
@@ -618,7 +637,9 @@ def _print_sync_summary(
         print(f"  + {path}{suffix}")
     print(f"refreshed: {len(refreshed)}")
     for path in refreshed:
-        print(f"  ~ {path}")
+        steps = synced_steps.get(path, [])
+        suffix = f" [{', '.join(steps)}]" if steps else ""
+        print(f"  ~ {path}{suffix}")
     print(f"removed:  {len(removed)}")
     for path in removed:
         print(f"  - {path}")
