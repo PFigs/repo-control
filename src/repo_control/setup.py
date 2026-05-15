@@ -27,16 +27,12 @@ def run_init(*, worktree_path: Path, cfg: dict) -> list[str]:
 
 def run_post_create(*, repo_path: Path, worktree_path: Path, ctx: dict) -> list[str]:
     """Run the per-repo post-create hook, if present. Returns list of steps."""
-    return _run_hook(
-        name="post-create", repo_path=repo_path, worktree_path=worktree_path, ctx=ctx
-    )
+    return _run_hook(name="post-create", repo_path=repo_path, worktree_path=worktree_path, ctx=ctx)
 
 
 def run_post_sync(*, repo_path: Path, worktree_path: Path, ctx: dict) -> list[str]:
     """Run the per-repo post-sync hook, if present. Returns list of steps."""
-    return _run_hook(
-        name="post-sync", repo_path=repo_path, worktree_path=worktree_path, ctx=ctx
-    )
+    return _run_hook(name="post-sync", repo_path=repo_path, worktree_path=worktree_path, ctx=ctx)
 
 
 def _run_hook(*, name: str, repo_path: Path, worktree_path: Path, ctx: dict) -> list[str]:
