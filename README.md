@@ -79,6 +79,15 @@ skip_repos = []                # ["owner/repo", ...] to ignore
 
 The skill ships inside the Python package at `repo_control/skill/SKILL.md`. `repo-control install-skill` symlinks it into `~/.claude/skills/repo-control/` so Claude Code picks it up. Idempotent; `--uninstall` removes the symlink.
 
+## Per-repo hooks
+
+Drop executable scripts in `<base>/<repo>/.repo-control/` to run custom commands during sync. The folder lives next to `main/` and the worktrees, NOT inside any worktree — fork PRs can never inject one.
+
+- `post-create` — runs once after a new PR worktree is set up, after the built-in installers.
+- `post-sync` — runs after every create AND every refresh, for the periodic action (re-auth, `mise run …`, etc.).
+
+Each script runs with the worktree as `cwd` and these env vars exposed: `REPO_CONTROL_EVENT`, `REPO_CONTROL_WORKTREE`, `REPO_CONTROL_REPO_PATH`, `REPO_CONTROL_OWNER`, `REPO_CONTROL_REPO`, `REPO_CONTROL_PR_NUMBER`, `REPO_CONTROL_BRANCH`. Non-zero exit is reported in the sync summary but does not abort. A file that isn't `chmod +x` is skipped with a warning.
+
 ## Safety properties
 
 - Idempotent. Re-running `sync` immediately is a no-op.
