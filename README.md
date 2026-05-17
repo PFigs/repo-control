@@ -54,6 +54,7 @@ repo-control open <pr>          # launch the configured IDE on that worktree
 repo-control open <pr> --ide=code
 repo-control clean              # prune stale worktrees (clean only)
 repo-control clean --force      # confirm-then-drop dirty ones too
+repo-control vacuum             # inspect dirty stale worktrees and drop selected ones
 repo-control setup              # re-run interactive config
 repo-control install-skill      # symlink the bundled skill (or --uninstall)
 ```

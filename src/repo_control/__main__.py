@@ -45,6 +45,10 @@ def main() -> int:
     clean_p.add_argument(
         "--force", action="store_true", help="Also drop dirty worktrees (with confirmation)"
     )
+    sub.add_parser(
+        "vacuum",
+        help="Inspect dirty stale worktrees (PR closed but uncommitted) and drop selected ones",
+    )
     install_p = sub.add_parser(
         "install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/"
     )
@@ -64,6 +68,8 @@ def main() -> int:
             return cmd_open(reference=args.pr, ide_override=args.ide)
         if args.cmd == "clean":
             return cmd_clean(force=args.force)
+        if args.cmd == "vacuum":
+            return cmd_vacuum()
         if args.cmd == "install-skill":
             return cmd_install_skill(uninstall=args.uninstall, force=args.force)
         if args.cmd == "setup":
@@ -349,6 +355,119 @@ def cmd_clean(*, force: bool) -> int:
         git.worktree_remove(repo_path=main_path, target=wt_path)
         print(f"removed {wt_path}")
     return 0
+
+
+def cmd_vacuum() -> int:
+    gh.check_auth()
+    cfg = config.load()
+    base = config.base_path(cfg=cfg)
+    prs = gh.list_open_prs()
+    wanted_by_repo: dict[tuple[str, str], set[Path]] = {}
+    for pr in prs:
+        repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
+        wt = state.worktree_path(
+            repo_path=repo_path,
+            name=pr.base_repo,
+            pr_number=pr.number,
+            branch=pr.head_branch,
+            layout=cfg["worktree_layout"],
+            prefix=cfg["prefix_worktrees"],
+        )
+        wanted_by_repo.setdefault((pr.base_owner, pr.base_repo), set()).add(wt.resolve())
+
+    targets: list[tuple[Path, Path, str | None, git.DirtySummary]] = []
+    for repo in state.discover_repos(base_path=base):
+        wanted = wanted_by_repo.get((repo.owner, repo.name), set())
+        default = git.default_branch(repo_path=repo.main_path)
+        for worktree in state.existing_worktrees(repo=repo):
+            wt_path = worktree.path.resolve()
+            if wt_path == repo.main_path.resolve():
+                continue
+            if wt_path in wanted:
+                continue
+            if git.is_clean(worktree_path=wt_path):
+                continue
+            summary = git.dirty_summary(worktree_path=wt_path)
+            branch = worktree.branch if worktree.branch != default else None
+            targets.append((repo.main_path, wt_path, branch, summary))
+
+    if not targets:
+        print("no dirty stale worktrees — nothing to vacuum")
+        return 0
+
+    print(f"{len(targets)} dirty stale worktree(s):\n")
+    for _, wt_path, branch, summary in targets:
+        _print_dirty_inspection(path=wt_path, branch=branch, summary=summary)
+        print()
+
+    by_key = {
+        str(wt_path): (main_path, wt_path, branch) for main_path, wt_path, branch, _ in targets
+    }
+    choices = [
+        picker.Choice(
+            key=str(wt_path),
+            label=_vacuum_label(path=wt_path, branch=branch, summary=summary),
+        )
+        for _, wt_path, branch, summary in targets
+    ]
+    chosen = picker.select_multi(
+        title="Worktrees to delete (destructive):",
+        choices=choices,
+        default_selected=False,
+    )
+    if chosen is None:
+        print("vacuum cancelled")
+        return 0
+    if not chosen:
+        print("nothing selected")
+        return 0
+
+    for key in chosen:
+        main_path, wt_path, branch = by_key[key]
+        git.worktree_remove(repo_path=main_path, target=wt_path, force=True)
+        if branch:
+            git.delete_branch(repo_path=main_path, branch=branch)
+        print(f"removed {wt_path}")
+    return 0
+
+
+def _vacuum_label(*, path: Path, branch: str | None, summary: git.DirtySummary) -> str:
+    bits = []
+    if summary.modified:
+        bits.append(f"M:{summary.modified}")
+    if summary.added:
+        bits.append(f"A:{summary.added}")
+    if summary.deleted:
+        bits.append(f"D:{summary.deleted}")
+    if summary.untracked:
+        bits.append(f"?:{summary.untracked}")
+    if summary.ahead:
+        bits.append(f"ahead:{summary.ahead}")
+    if summary.unmerged:
+        bits.append(f"unmerged:{summary.unmerged}")
+    if summary.stashes:
+        bits.append(f"stash:{summary.stashes}")
+    counts = " ".join(bits) if bits else "clean?"
+    branch_str = branch or "-"
+    return f"{path}  [{branch_str}]  {counts}"
+
+
+def _print_dirty_inspection(*, path: Path, branch: str | None, summary: git.DirtySummary) -> None:
+    branch_str = branch or "(detached)"
+    print(f"  {path}")
+    print(f"    branch: {branch_str}")
+    counts = (
+        f"M:{summary.modified} A:{summary.added} D:{summary.deleted} "
+        f"?:{summary.untracked} ahead:{summary.ahead} "
+        f"unmerged:{summary.unmerged} stash:{summary.stashes}"
+    )
+    print(f"    {counts}")
+    snippet = summary.porcelain[:10]
+    for line in snippet:
+        print(f"      {line}")
+    remaining = len(summary.porcelain) - len(snippet)
+    if remaining > 0:
+        print(f"      ... and {remaining} more")
 
 
 def _select_repos_interactive(
@@ -668,6 +787,7 @@ def _print_sync_summary(
         print(f"kept dirty: {len(kept_dirty)} (PR closed but worktree has uncommitted work)")
         for path in kept_dirty:
             print(f"  ! {path}")
+        print("  run `repo-control vacuum` to inspect and drop them")
 
 
 if __name__ == "__main__":
