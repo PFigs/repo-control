@@ -19,7 +19,7 @@ DEFAULTS: dict = {
     "skip_repos": [],
     "auto_install": True,
     "auto_trust_mise": True,
-    "worktree_layout": "hierarchical",
+    "worktree_layout": "flat",
     "prefix_worktrees": True,
     "bare_repo": False,
 }
@@ -49,7 +49,7 @@ def write(
     skip_repos: list[str],
     auto_install: bool = True,
     auto_trust_mise: bool = True,
-    worktree_layout: str = "hierarchical",
+    worktree_layout: str = "flat",
     prefix_worktrees: bool = True,
     bare_repo: bool = False,
 ) -> Path:

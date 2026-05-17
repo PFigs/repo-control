@@ -10,14 +10,14 @@ For every open PR the user has authored on GitHub, the `repo-control` CLI scaffo
 
 ```
 <base_path>/
-  webapp/                        # hierarchical layout (default)
+  webapp/                        # flat layout (default)
     webapp-main/
-    .worktrees/
-      webapp-142-fix-navbar-overflow/
-      webapp-141-add-dark-mode/
-  cli-tool/                      # flat layout
+    webapp-142-fix-navbar-overflow/
+    webapp-141-add-dark-mode/
+  cli-tool/                      # hierarchical layout
     cli-tool-main/
-    cli-tool-37-bump-python-to-312/
+    .worktrees/
+      cli-tool-37-bump-python-to-312/
 ```
 
 Every worktree folder is prefixed with the repo name (lowercased). The repo dir itself is also lowercased on new clones. Pre-existing `<repo>-control/` or `<repo>/main/` layouts from older versions are reused in place.
@@ -30,7 +30,7 @@ ide = "idea"                       # any binary on PATH; suggestions: idea, code
 skip_repos = []                    # ["owner/repo", ...]
 auto_install = true                # run mise install / uv sync / npm install in fresh worktrees
 auto_trust_mise = true             # `mise trust` before `mise install` to skip its prompt
-worktree_layout = "hierarchical"   # "hierarchical" (.worktrees/) or "flat" (siblings)
+worktree_layout = "flat"           # "flat" (siblings) or "hierarchical" (.worktrees/)
 prefix_worktrees = true            # name folders <repo-lower>-main / <repo-lower>-<pr>-<branch>
 ```
 

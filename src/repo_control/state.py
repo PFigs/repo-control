@@ -47,6 +47,28 @@ def worktree_path(
     return repo_path / folder
 
 
+def acceptable_worktree_paths(
+    *,
+    repo_path: Path,
+    name: str,
+    pr_number: int,
+    branch: str,
+    layout: str,
+) -> set[Path]:
+    """Worktree folder names with or without the repo prefix are both accepted."""
+    return {
+        worktree_path(
+            repo_path=repo_path,
+            name=name,
+            pr_number=pr_number,
+            branch=branch,
+            layout=layout,
+            prefix=prefix,
+        )
+        for prefix in (True, False)
+    }
+
+
 def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
     """Prefer an existing legacy dir on disk; otherwise return the canonical lowercase path."""
     for candidate in (

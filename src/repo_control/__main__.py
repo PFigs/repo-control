@@ -168,23 +168,37 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 layout=cfg["worktree_layout"],
                 prefix=cfg["prefix_worktrees"],
             )
+            acceptable = {
+                p.resolve()
+                for p in state.acceptable_worktree_paths(
+                    repo_path=repo_path,
+                    name=name,
+                    pr_number=pr_number,
+                    branch=pr.head_branch,
+                    layout=cfg["worktree_layout"],
+                )
+            }
             wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
             existing_path = existing_by_branch.get(local_branch)
-            if existing_path is not None and existing_path.resolve() != wt_path.resolve():
-                if git.is_clean(worktree_path=existing_path):
-                    git.worktree_move(
-                        repo_path=main_path,
-                        source=existing_path,
-                        target=wt_path,
-                    )
-                    existing_by_branch[local_branch] = wt_path
-                else:
-                    print(
-                        f"warning: {local_branch} at {existing_path} is dirty; "
-                        f"refreshing in place instead of moving to {wt_path}"
-                    )
+            if existing_path is not None:
+                existing_resolved = existing_path.resolve()
+                if existing_resolved in acceptable:
                     wt_path = existing_path
+                elif existing_resolved != wt_path.resolve():
+                    if git.is_clean(worktree_path=existing_path):
+                        git.worktree_move(
+                            repo_path=main_path,
+                            source=existing_path,
+                            target=wt_path,
+                        )
+                        existing_by_branch[local_branch] = wt_path
+                    else:
+                        print(
+                            f"warning: {local_branch} at {existing_path} is dirty; "
+                            f"refreshing in place instead of moving to {wt_path}"
+                        )
+                        wt_path = existing_path
             hook_ctx = {
                 "owner": owner,
                 "name": name,
@@ -230,17 +244,17 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         if (repo.owner, repo.name) not in selected_repos:
             continue
         wanted = desired.get((repo.owner, repo.name), {})
-        wanted_paths = {
-            state.worktree_path(
-                repo_path=repo.path,
-                name=repo.name,
-                pr_number=pr.number,
-                branch=pr.head_branch,
-                layout=cfg["worktree_layout"],
-                prefix=cfg["prefix_worktrees"],
+        wanted_paths: set[Path] = set()
+        for pr in wanted.values():
+            wanted_paths.update(
+                state.acceptable_worktree_paths(
+                    repo_path=repo.path,
+                    name=repo.name,
+                    pr_number=pr.number,
+                    branch=pr.head_branch,
+                    layout=cfg["worktree_layout"],
+                )
             )
-            for pr in wanted.values()
-        }
         wanted_paths.add(repo.main_path)
         default = git.default_branch(repo_path=repo.main_path)
         for worktree in state.existing_worktrees(repo=repo):
@@ -298,15 +312,15 @@ def cmd_clean(*, force: bool) -> int:
     for pr in prs:
         key = (pr.base_owner, pr.base_repo)
         repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
-        wt = state.worktree_path(
+        bucket = wanted_by_repo.setdefault(key, set())
+        for variant in state.acceptable_worktree_paths(
             repo_path=repo_path,
             name=pr.base_repo,
             pr_number=pr.number,
             branch=pr.head_branch,
             layout=cfg["worktree_layout"],
-            prefix=cfg["prefix_worktrees"],
-        )
-        wanted_by_repo.setdefault(key, set()).add(wt.resolve())
+        ):
+            bucket.add(variant.resolve())
 
     stale_clean: list[tuple[Path, Path, str | None]] = []
     stale_dirty: list[tuple[Path, Path]] = []  # (main_path, wt_path)
@@ -365,15 +379,15 @@ def cmd_vacuum() -> int:
     wanted_by_repo: dict[tuple[str, str], set[Path]] = {}
     for pr in prs:
         repo_path = state.resolve_repo_dir(base_path=base, owner=pr.base_owner, name=pr.base_repo)
-        wt = state.worktree_path(
+        bucket = wanted_by_repo.setdefault((pr.base_owner, pr.base_repo), set())
+        for variant in state.acceptable_worktree_paths(
             repo_path=repo_path,
             name=pr.base_repo,
             pr_number=pr.number,
             branch=pr.head_branch,
             layout=cfg["worktree_layout"],
-            prefix=cfg["prefix_worktrees"],
-        )
-        wanted_by_repo.setdefault((pr.base_owner, pr.base_repo), set()).add(wt.resolve())
+        ):
+            bucket.add(variant.resolve())
 
     targets: list[tuple[Path, Path, str | None, git.DirtySummary]] = []
     for repo in state.discover_repos(base_path=base):
@@ -576,8 +590,8 @@ def cmd_setup() -> int:
         .lower()
     )
     if layout_choice not in {"hierarchical", "flat"}:
-        print(f"  unknown layout {layout_choice!r}; using 'hierarchical'")
-        layout_choice = "hierarchical"
+        print(f"  unknown layout {layout_choice!r}; using 'flat'")
+        layout_choice = "flat"
 
     prefix_worktrees = _prompt_bool(
         label=(
@@ -693,7 +707,7 @@ def _collect_rows() -> list[WorktreeRow]:
                     )
                 )
                 continue
-            pr_number = _pr_number_from_dir(name=wt_path.name)
+            pr_number = _pr_number_from_dir(name=wt_path.name, repo_name=repo.name)
             status = "clean" if git.is_clean(worktree_path=wt_path) else "dirty"
             rows.append(
                 WorktreeRow(
@@ -707,8 +721,12 @@ def _collect_rows() -> list[WorktreeRow]:
     return rows
 
 
-def _pr_number_from_dir(*, name: str) -> int | None:
-    head, _, _ = name.partition("-")
+def _pr_number_from_dir(*, name: str, repo_name: str) -> int | None:
+    stripped = name
+    prefix = f"{repo_name.lower()}-"
+    if stripped.startswith(prefix):
+        stripped = stripped[len(prefix) :]
+    head, _, _ = stripped.partition("-")
     if head.isdigit():
         return int(head)
     return None
