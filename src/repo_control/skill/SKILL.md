@@ -58,6 +58,7 @@ Do not retry blindly. Do not bootstrap silently.
 | "list my worktrees", "what am I working on" | `repo-control list` |
 | "open PR 5432", "open the parser fix" (after resolving) | `repo-control open <pr>` |
 | "clean stale worktrees", "prune merged ones" | `repo-control clean` |
+| "what's dirty", "vacuum dirty worktrees", "kill the kept-dirty ones" | `repo-control vacuum` |
 | "set up repo-control", "reconfigure repo-control" | `repo-control setup` |
 | "install the skill", "link the skill" | `repo-control install-skill` |
 
@@ -77,6 +78,10 @@ If the user's reference is ambiguous (e.g. "open the parser fix"), run `repo-con
 ## clean
 
 Never run `repo-control clean --force` without explicit user authorisation in this turn. The plain `repo-control clean` removes only worktrees that are clean and whose PR no longer exists — that's safe and you can run it when asked.
+
+## vacuum
+
+`repo-control vacuum` targets the same set as the "kept dirty" callout from `sync`: worktrees whose PR has closed but that still have uncommitted work, unpushed commits, or branch-scoped stashes. It prints a per-worktree inspection (file counts, ahead/stash, and the first lines of `git status --short`) and opens a multi-select picker with everything **unchecked by default** since selection is destructive. Selected worktrees are removed with `git worktree remove --force` and their branch is deleted. Run when the user says they want to drop the kept-dirty entries; never preselect on their behalf.
 
 ## setup
 

@@ -13,6 +13,18 @@ class Worktree:
     branch: str | None  # None for detached HEAD
 
 
+@dataclass(frozen=True)
+class DirtySummary:
+    modified: int
+    added: int
+    deleted: int
+    untracked: int
+    ahead: int  # commits ahead of upstream tracking branch (0 if no upstream)
+    unmerged: int  # commits on HEAD not patch-equivalent to anything on origin/<default>
+    stashes: int
+    porcelain: tuple[str, ...]  # raw `git status --porcelain` lines
+
+
 def _run(
     args: list[str], *, cwd: Path | None = None, check: bool = True
 ) -> subprocess.CompletedProcess:
@@ -182,11 +194,12 @@ def worktree_add_tracking(
     )
 
 
-def worktree_remove(*, repo_path: Path, target: Path) -> None:
-    _run(
-        ["git", "worktree", "remove", str(target)],
-        cwd=repo_path,
-    )
+def worktree_remove(*, repo_path: Path, target: Path, force: bool = False) -> None:
+    args = ["git", "worktree", "remove"]
+    if force:
+        args.append("--force")
+    args.append(str(target))
+    _run(args, cwd=repo_path)
 
 
 def worktree_move(*, repo_path: Path, source: Path, target: Path) -> None:
@@ -228,6 +241,78 @@ def is_clean(*, worktree_path: Path) -> bool:
     if ahead.stdout.strip() == "0":
         return True
     return _all_commits_merged(worktree_path=worktree_path)
+
+
+def dirty_summary(*, worktree_path: Path) -> DirtySummary:
+    """Per-worktree snapshot used by `vacuum` to show what's dirty."""
+    status = _run(["git", "status", "--porcelain"], cwd=worktree_path, check=False)
+    lines: list[str] = (
+        [line for line in status.stdout.splitlines() if line] if status.returncode == 0 else []
+    )
+    modified = added = deleted = untracked = 0
+    for line in lines:
+        code = line[:2]
+        if code == "??":
+            untracked += 1
+            continue
+        x, y = code[0], code[1]
+        if "A" in (x, y):
+            added += 1
+        elif "D" in (x, y):
+            deleted += 1
+        else:
+            modified += 1
+
+    head = _run(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree_path, check=False)
+    ahead = 0
+    unmerged = 0
+    stashes = 0
+    if head.returncode == 0:
+        branch = head.stdout.strip()
+        upstream = _run(
+            ["git", "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"],
+            cwd=worktree_path,
+            check=False,
+        )
+        if upstream.returncode == 0:
+            count = _run(
+                ["git", "rev-list", "--count", f"{upstream.stdout.strip()}..{branch}"],
+                cwd=worktree_path,
+                check=False,
+            )
+            if count.returncode == 0 and count.stdout.strip().isdigit():
+                ahead = int(count.stdout.strip())
+        try:
+            default = default_branch(repo_path=worktree_path)
+        except GitError:
+            default = None
+        if default is not None:
+            cherry = _run(
+                ["git", "cherry", f"origin/{default}", "HEAD"],
+                cwd=worktree_path,
+                check=False,
+            )
+            if cherry.returncode == 0:
+                unmerged = sum(1 for line in cherry.stdout.splitlines() if line.startswith("+"))
+        stash = _run(["git", "stash", "list", "--format=%gs"], cwd=worktree_path, check=False)
+        if stash.returncode == 0 and stash.stdout.strip():
+            for subject in stash.stdout.splitlines():
+                subject = subject.strip()
+                for prefix in ("WIP on ", "On "):
+                    if subject.startswith(prefix):
+                        if subject.removeprefix(prefix).split(":", 1)[0] == branch:
+                            stashes += 1
+                        break
+    return DirtySummary(
+        modified=modified,
+        added=added,
+        deleted=deleted,
+        untracked=untracked,
+        ahead=ahead,
+        unmerged=unmerged,
+        stashes=stashes,
+        porcelain=tuple(lines),
+    )
 
 
 def _has_stash_for_branch(*, worktree_path: Path, branch: str) -> bool:
