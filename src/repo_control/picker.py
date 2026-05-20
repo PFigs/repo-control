@@ -20,17 +20,27 @@ def select_multi(
     title: str,
     choices: Sequence[Choice],
     default_selected: bool = True,
+    preselected_keys: set[str] | None = None,
 ) -> list[str] | None:
     """Render an interactive checkbox list. Returns selected keys, or None if cancelled.
 
-    Falls back to "select all" when stdin is not a TTY.
+    Each choice starts checked iff its key is in ``preselected_keys``; when that
+    is None, every choice starts at ``default_selected``.
+
+    Falls back to the same initial selection when stdin is not a TTY.
     """
     if not choices:
         return []
-    if not sys.stdin.isatty():
-        return [c.key for c in choices] if default_selected else []
 
-    selected = [default_selected] * len(choices)
+    def initial(choice: Choice) -> bool:
+        if preselected_keys is None:
+            return default_selected
+        return choice.key in preselected_keys
+
+    if not sys.stdin.isatty():
+        return [c.key for c in choices if initial(c)]
+
+    selected = [initial(c) for c in choices]
     cursor = 0
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
