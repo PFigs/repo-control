@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import os
 import shlex
 import shutil
@@ -49,6 +50,16 @@ def main() -> int:
         "vacuum",
         help="Inspect dirty stale worktrees (PR closed but uncommitted) and drop selected ones",
     )
+    sync_stack_p = sub.add_parser(
+        "sync-stack",
+        help="Reconcile sidecar worktrees and restack from <repo>-main (flock-guarded)",
+    )
+    sync_stack_p.add_argument(
+        "repo",
+        nargs="?",
+        default=None,
+        help="Limit to one repo (owner/name or GitHub URL); default: all mirrored repos",
+    )
     install_p = sub.add_parser(
         "install-skill", help="Symlink the bundled Claude skill into ~/.claude/skills/"
     )
@@ -70,6 +81,8 @@ def main() -> int:
             return cmd_clean(force=args.force)
         if args.cmd == "vacuum":
             return cmd_vacuum()
+        if args.cmd == "sync-stack":
+            return cmd_sync_stack(repo_arg=args.repo)
         if args.cmd == "install-skill":
             return cmd_install_skill(uninstall=args.uninstall, force=args.force)
         if args.cmd == "setup":
@@ -92,6 +105,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
     skip = set(cfg["skip_repos"])
     base = config.base_path(cfg=cfg)
     base.mkdir(parents=True, exist_ok=True)
+    sidecar = cfg["sidecar_branches"]
 
     single_repo = _parse_repo_arg(value=repo_arg) if repo_arg else None
     if repo_arg and single_repo is None:
@@ -152,6 +166,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         git.fetch(repo_path=main_path)
         default = git.default_branch(repo_path=main_path)
         git.fast_forward(repo_path=main_path, branch=default)
+        setup.install_sync_stack_script(repo_path=repo_path, slug=f"{owner}/{name}")
 
         existing_by_branch = {
             wt.branch: wt.path
@@ -180,7 +195,10 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             }
             wt_path.parent.mkdir(parents=True, exist_ok=True)
             local_branch = f"pr-{pr_number}" if pr.is_fork else pr.head_branch
-            existing_path = existing_by_branch.get(local_branch)
+            wt_branch = state.sidecar_name(real=local_branch) if sidecar else local_branch
+            existing_path = existing_by_branch.get(wt_branch) or existing_by_branch.get(
+                local_branch
+            )
             if existing_path is not None:
                 existing_resolved = existing_path.resolve()
                 if existing_resolved in acceptable:
@@ -192,7 +210,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                             source=existing_path,
                             target=wt_path,
                         )
-                        existing_by_branch[local_branch] = wt_path
+                        existing_by_branch[wt_branch] = wt_path
                     else:
                         print(
                             f"warning: {local_branch} at {existing_path} is dirty; "
@@ -206,6 +224,9 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 "branch": local_branch,
             }
             if wt_path.exists():
+                if sidecar and git.current_branch(worktree_path=wt_path) == local_branch:
+                    git.switch_new_branch(worktree_path=wt_path, name=wt_branch)
+                    git.set_upstream(repo_path=main_path, branch=wt_branch, upstream=local_branch)
                 if pr.is_fork and pr.fork_clone_url:
                     git.fetch_fork(
                         repo_path=main_path,
@@ -215,6 +236,12 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                     )
                 else:
                     git.fetch(repo_path=main_path, refspec=pr.head_branch)
+                    if sidecar:
+                        git.fast_forward_branch(
+                            repo_path=main_path,
+                            branch=local_branch,
+                            to_ref=f"origin/{local_branch}",
+                        )
                 refreshed.append(wt_path)
                 synced_steps[wt_path] = setup.run_post_sync(
                     repo_path=repo_path, worktree_path=wt_path, ctx=hook_ctx
@@ -229,7 +256,16 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 )
             else:
                 git.fetch(repo_path=main_path, refspec=pr.head_branch)
-            git.worktree_add(repo_path=main_path, target=wt_path, branch=local_branch)
+            if sidecar:
+                git.worktree_add_sidecar(
+                    repo_path=main_path,
+                    target=wt_path,
+                    real_branch=local_branch,
+                    sidecar_branch=wt_branch,
+                    start_point=local_branch if pr.is_fork else f"origin/{local_branch}",
+                )
+            else:
+                git.worktree_add(repo_path=main_path, target=wt_path, branch=local_branch)
             created.append(wt_path)
             init_steps = setup.run_init(worktree_path=wt_path, cfg=cfg)
             post_create_steps = setup.run_post_create(
@@ -267,8 +303,8 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                 kept_dirty.append(wt_path)
                 continue
             git.worktree_remove(repo_path=repo.main_path, target=wt_path)
-            if worktree.branch and worktree.branch != default:
-                git.delete_branch(repo_path=repo.main_path, branch=worktree.branch)
+            branch = worktree.branch if worktree.branch != default else None
+            _delete_worktree_branches(repo_path=repo.main_path, branch=branch)
             removed.append(wt_path)
 
     _print_sync_summary(
@@ -280,6 +316,104 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
         synced_steps=synced_steps,
     )
     return 0
+
+
+def cmd_sync_stack(*, repo_arg: str | None = None) -> int:
+    cfg = config.load()
+    base = config.base_path(cfg=cfg)
+    single_repo = _parse_repo_arg(value=repo_arg) if repo_arg else None
+    if repo_arg and single_repo is None:
+        raise ValueError(f"could not parse {repo_arg!r} as owner/name or GitHub URL")
+    repos = [
+        repo
+        for repo in state.discover_repos(base_path=base)
+        if single_repo is None or (repo.owner, repo.name) == single_repo
+    ]
+    if not repos:
+        print("no mirrored repos found — run `repo-control sync` first")
+        return 0
+    for repo in repos:
+        print(f"{repo.slug}:")
+        handle = _acquire_lock(path=setup.sync_stack_lock_path(repo_path=repo.path))
+        if handle is None:
+            print(f"  another session is syncing {repo.slug}; skipped")
+            continue
+        try:
+            for line in _sync_stack_repo(repo=repo):
+                print(line)
+        finally:
+            _release_lock(handle=handle)
+    return 0
+
+
+def _acquire_lock(*, path: Path):
+    """Take a non-blocking exclusive flock. Returns the open handle, or None if held."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("w")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def _release_lock(*, handle) -> None:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle.close()
+
+
+def _sync_stack_repo(*, repo: state.RepoDir) -> list[str]:
+    """Reconcile sidecar worktrees and restack one repo from its main checkout.
+
+    Outbound: fast-forward each real branch up to its sidecar's committed HEAD.
+    Restack: `gt sync` (graphite repos) or fetch + fast-forward trunk (plain repos).
+    Inbound: rebase each clean sidecar onto its restacked real branch.
+    """
+    main = repo.main_path
+    default = git.default_branch(repo_path=main)
+    sidecars = [
+        wt
+        for wt in git.list_worktrees(repo_path=main)
+        if wt.branch is not None
+        and wt.path.resolve() != main.resolve()
+        and state.is_sidecar(branch=wt.branch)
+    ]
+    notes: list[str] = []
+
+    for wt in sidecars:
+        real = state.real_from_sidecar(sidecar=wt.branch)
+        if not git.branch_exists(repo_path=main, branch=real):
+            continue
+        if git.fast_forward_branch(repo_path=main, branch=real, to_ref=wt.branch):
+            notes.append(f"  outbound: {real} fast-forwarded to {wt.branch}")
+        elif not git.is_ancestor(repo_path=main, ancestor=real, descendant=wt.branch):
+            notes.append(f"  ! {real} has diverged from {wt.branch}; reconcile by hand")
+
+    if git.has_graphite(repo_path=main):
+        ok = git.gt_sync(repo_path=main)
+        notes.append("  restack: gt sync" if ok else "  ! gt sync failed")
+    else:
+        git.fetch(repo_path=main)
+        git.fast_forward(repo_path=main, branch=default)
+        notes.append(f"  restack: fetched, fast-forwarded {default} (no graphite)")
+
+    for wt in sidecars:
+        real = state.real_from_sidecar(sidecar=wt.branch)
+        if not git.branch_exists(repo_path=main, branch=real):
+            notes.append(f"  inbound: {wt.branch} skipped ({real} gone — merged?)")
+            continue
+        if not git.is_clean(worktree_path=wt.path):
+            notes.append(f"  inbound: {wt.branch} skipped (worktree dirty)")
+            continue
+        if git.rebase(worktree_path=wt.path, onto=real):
+            notes.append(f"  inbound: {wt.branch} rebased onto {real}")
+        else:
+            notes.append(f"  ! {wt.branch} rebase onto {real} conflicted; left untouched")
+
+    if not sidecars:
+        notes.append("  no sidecar worktrees")
+    return notes
 
 
 def cmd_list() -> int:
@@ -301,6 +435,19 @@ def cmd_open(*, reference: str, ide_override: str | None) -> int:
     ide.launch(ide=chosen, path=path)
     print(f"launching {chosen} on {path}")
     return 0
+
+
+def _delete_worktree_branches(*, repo_path: Path, branch: str | None) -> None:
+    """Delete a removed worktree's branch, plus the real branch if it was a sidecar.
+
+    Callers pass `None` for a worktree whose branch is the repo's default.
+    """
+    if not branch:
+        return
+    git.delete_branch(repo_path=repo_path, branch=branch)
+    real = state.real_from_sidecar(sidecar=branch)
+    if real != branch:
+        git.delete_branch(repo_path=repo_path, branch=real)
 
 
 def cmd_clean(*, force: bool) -> int:
@@ -346,8 +493,7 @@ def cmd_clean(*, force: bool) -> int:
 
     for main_path, wt_path, branch in stale_clean:
         git.worktree_remove(repo_path=main_path, target=wt_path)
-        if branch:
-            git.delete_branch(repo_path=main_path, branch=branch)
+        _delete_worktree_branches(repo_path=main_path, branch=branch)
         print(f"removed {wt_path}")
 
     if not stale_dirty:
@@ -439,8 +585,7 @@ def cmd_vacuum() -> int:
     for key in chosen:
         main_path, wt_path, branch = by_key[key]
         git.worktree_remove(repo_path=main_path, target=wt_path, force=True)
-        if branch:
-            git.delete_branch(repo_path=main_path, branch=branch)
+        _delete_worktree_branches(repo_path=main_path, branch=branch)
         print(f"removed {wt_path}")
     return 0
 
@@ -606,6 +751,14 @@ def cmd_setup() -> int:
         default=cfg["bare_repo"],
     )
 
+    sidecar_branches = _prompt_bool(
+        label=(
+            "Check out PR worktrees on a sidecar branch (claude/<branch>) so the real "
+            "branch stays free for `gt sync` in <repo>-main?"
+        ),
+        default=cfg["sidecar_branches"],
+    )
+
     Path(base).mkdir(parents=True, exist_ok=True)
     written = config.write(
         base_path=base,
@@ -616,6 +769,7 @@ def cmd_setup() -> int:
         worktree_layout=layout_choice,
         prefix_worktrees=prefix_worktrees,
         bare_repo=bare_repo,
+        sidecar_branches=sidecar_branches,
     )
     print(f"\nWrote {written}")
     return 0
@@ -709,11 +863,16 @@ def _collect_rows() -> list[WorktreeRow]:
                 continue
             pr_number = _pr_number_from_dir(name=wt_path.name, repo_name=repo.name)
             status = "clean" if git.is_clean(worktree_path=wt_path) else "dirty"
+            branch = (
+                state.real_from_sidecar(sidecar=worktree.branch)
+                if worktree.branch is not None
+                else None
+            )
             rows.append(
                 WorktreeRow(
                     repo_slug=repo.slug,
                     pr_number=pr_number,
-                    branch=worktree.branch,
+                    branch=branch,
                     path=wt_path,
                     status=status,
                 )

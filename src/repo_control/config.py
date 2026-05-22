@@ -22,6 +22,7 @@ DEFAULTS: dict = {
     "worktree_layout": "flat",
     "prefix_worktrees": True,
     "bare_repo": False,
+    "sidecar_branches": True,
 }
 
 
@@ -52,6 +53,7 @@ def write(
     worktree_layout: str = "flat",
     prefix_worktrees: bool = True,
     bare_repo: bool = False,
+    sidecar_branches: bool = True,
 ) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,7 @@ def write(
         f'worktree_layout = "{worktree_layout}"\n'
         f"prefix_worktrees = {str(prefix_worktrees).lower()}\n"
         f"bare_repo = {str(bare_repo).lower()}\n"
+        f"sidecar_branches = {str(sidecar_branches).lower()}\n"
     )
     return path
 
