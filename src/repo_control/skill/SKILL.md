@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # repo-control
 
-For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a per-repo folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's `main/` worktree plus one worktree per open PR.
+For every open PR the user has authored on GitHub, the `repo-control` CLI scaffolds a per-repo folder under one configurable base path (default `~/.local/share/repo-control/`, XDG_DATA_HOME). Each folder holds the repo's main checkout plus one worktree per open PR.
 
 ```
 <base_path>/
@@ -15,13 +15,15 @@ For every open PR the user has authored on GitHub, the `repo-control` CLI scaffo
     webapp-142-fix-navbar/       # checked out on sidecar claude/142-fix-navbar
     webapp-141-add-dark-mode/    # checked out on sidecar claude/141-add-dark-mode
     .repo-control/               # per-repo hooks + the sync-stack shim + lock
-  cli-tool/                      # hierarchical layout
-    cli-tool-main/
-    .worktrees/
+  cli-tool/                      # hierarchical layout: the repo folder IS the main checkout
+    .worktrees/                  # PR worktrees, git-excluded along with .repo-control/
       cli-tool-37-bump-python-to-312/
+    .repo-control/
 ```
 
-Every worktree folder is prefixed with the repo name (lowercased). The repo dir itself is also lowercased on new clones. Pre-existing `<repo>-control/` or `<repo>/main/` layouts from older versions are reused in place.
+With `bare_repo = true` (hierarchical), `.git` at `<repo>/.git` is bare and main is itself a worktree at `<repo>/.worktrees/<repo>-main/`, next to the PR worktrees.
+
+Every worktree folder is prefixed with the repo name (lowercased). The repo dir itself is also lowercased on new clones. An existing main checkout on disk (`<repo>-control/`, `<repo>/main/`, `<repo>/<repo>-main/`) always wins detection and is reused in place; nothing migrates.
 
 Configuration lives at `~/.config/repo-control/config.toml` (XDG_CONFIG_HOME). Created interactively by `repo-control setup` or on first `sync`.
 
@@ -31,24 +33,24 @@ ide = "idea"                       # any binary on PATH; suggestions: idea, code
 skip_repos = []                    # ["owner/repo", ...]
 auto_install = true                # run mise install / uv sync / npm install in fresh worktrees
 auto_trust_mise = true             # `mise trust` before `mise install` to skip its prompt
-worktree_layout = "flat"           # "flat" (siblings) or "hierarchical" (.worktrees/)
+worktree_layout = "flat"           # "flat" (siblings) or "hierarchical" (repo folder = main, PRs in .worktrees/)
 prefix_worktrees = true            # name folders <repo-lower>-main / <repo-lower>-<pr>-<branch>
-bare_repo = false                  # store .git as a bare repo and treat main as a worktree
+bare_repo = false                  # bare .git at the repo root; main becomes a worktree under .worktrees/
 sidecar_branches = true            # check PR worktrees out on a claude/<branch> sidecar
 ```
 
 ## Sidecar model — diff in the worktree, sync from main
 
 Each PR worktree is checked out on a **sidecar branch** `claude/<branch>`, not the PR's
-real branch. The real `<branch>` stays in `<repo>-main/` **un-checked-out**, so `gt sync`
+real branch. The real `<branch>` stays in the main checkout **un-checked-out**, so `gt sync`
 can restack the whole Graphite stack there — git refuses to rebase a branch that is
 checked out in a worktree, which is why direct-checkout worktrees broke `gt sync`.
 
 The contract:
 
 - **All editing happens in the worktree folder**, on the `claude/<branch>` sidecar.
-- **Sync / consistency happens only in `<repo>-main/`** — never run `gt sync` inside a
-  worktree, and never run two `gt sync` for the same repo at once.
+- **Sync / consistency happens only in the main checkout** — never run `gt sync` inside a
+  PR worktree, and never run two `gt sync` for the same repo at once.
 - `repo-control sync-stack` is the one safe way to restack: it holds an flock, then
   fast-forwards `<branch>` from the sidecar, restacks in main, and rebases the sidecar
   back onto the restacked `<branch>`.
@@ -98,7 +100,7 @@ Never auto-rerun on failure. Never run `clean` as a follow-up unless the user as
 
 ## sync-stack
 
-`repo-control sync-stack` is the consistency operation — run it from anywhere; it operates inside each `<repo>-main/`. It is flock-guarded, so it is safe to run while a parallel session is working: if the lock is held it reports `another session is syncing <repo>` and skips that repo rather than colliding.
+`repo-control sync-stack` is the consistency operation — run it from anywhere; it operates inside each repo's main checkout. It is flock-guarded, so it is safe to run while a parallel session is working: if the lock is held it reports `another session is syncing <repo>` and skips that repo rather than colliding.
 
 For each repo it: fast-forwards each real `<branch>` from its sidecar's committed work, restacks (`gt sync` where Graphite metadata exists, otherwise `git fetch` + fast-forward of trunk), then rebases each clean sidecar back onto its restacked `<branch>`. Pass `<owner/repo>` to limit it to one repo.
 
@@ -136,7 +138,7 @@ Symlinks the skill (bundled inside the installed Python package) to `~/.claude/s
 
 ## Per-repo hooks
 
-Drop executable scripts in `<base>/<repo>/.repo-control/` to run custom commands during sync. The folder lives next to `main/` and the worktrees, NOT inside any worktree — fork PRs can never inject one. It also holds the generated `sync-stack` shim and the sync-stack flock.
+Drop executable scripts in `<base>/<repo>/.repo-control/` to run custom commands during sync. The folder sits at the repo folder root, never inside any PR worktree — fork PRs can never inject one. In hierarchical layout that root is the main checkout's own tree; the folder is git-excluded via `.git/info/exclude`. It also holds the generated `sync-stack` shim and the sync-stack flock.
 
 - `post-create` — runs once after a new PR worktree is set up, after the built-in installers.
 - `post-sync` — runs after every create AND every refresh, for periodic actions (re-auth, `mise run …`, etc.).

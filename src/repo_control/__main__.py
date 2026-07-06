@@ -136,7 +136,11 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
     for (owner, name), prs_by_num in sorted(desired.items()):
         repo_path = state.resolve_repo_dir(base_path=base, owner=owner, name=name)
         main_path = state.ensure_main_path(
-            repo_path=repo_path, name=name, prefix=cfg["prefix_worktrees"]
+            repo_path=repo_path,
+            name=name,
+            layout=cfg["worktree_layout"],
+            prefix=cfg["prefix_worktrees"],
+            bare=cfg["bare_repo"],
         )
         if repo_path.exists() and main_path.exists():
             existing = git.remote_url(repo_path=main_path)
@@ -147,7 +151,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
                     f"{existing_parsed[0]}/{existing_parsed[1]} (name collision)"
                 )
                 continue
-        if not main_path.exists():
+        if not (main_path / ".git").exists():
             print(f"cloning {owner}/{name} ...")
             if cfg["bare_repo"]:
                 git_dir = repo_path / ".git"
@@ -163,6 +167,7 @@ def cmd_sync(*, repo_arg: str | None = None) -> int:
             else:
                 main_path.parent.mkdir(parents=True, exist_ok=True)
                 git.clone(owner=owner, name=name, target=main_path)
+        _exclude_repo_dirs(main_path=main_path, repo_path=repo_path)
         git.fetch(repo_path=main_path)
         default = git.default_branch(repo_path=main_path)
         git.fast_forward(repo_path=main_path, branch=default)
@@ -363,6 +368,15 @@ def _release_lock(*, handle) -> None:
     handle.close()
 
 
+def _exclude_repo_dirs(*, main_path: Path, repo_path: Path) -> None:
+    if main_path.resolve() != repo_path.resolve():
+        return
+    git.ensure_excluded(
+        worktree_path=main_path,
+        patterns=[f"/{state.WORKTREES_SUBDIR}/", f"/{setup.HOOKS_DIR}/"],
+    )
+
+
 def _sync_stack_repo(*, repo: state.RepoDir) -> list[str]:
     """Reconcile sidecar worktrees and restack one repo from its main checkout.
 
@@ -370,6 +384,7 @@ def _sync_stack_repo(*, repo: state.RepoDir) -> list[str]:
     Restack: `gt sync` (graphite repos) or fetch + fast-forward trunk (plain repos).
     Inbound: rebase each clean sidecar onto its restacked real branch.
     """
+    _exclude_repo_dirs(main_path=repo.main_path, repo_path=repo.path)
     main = repo.main_path
     default = git.default_branch(repo_path=main)
     sidecars = [
@@ -691,7 +706,9 @@ def cmd_setup() -> int:
 
     print(
         "Workspace path: each open PR you author becomes a worktree under "
-        "<workspace>/<repo>-control/<pr>-<branch>/, alongside <repo>-control/main/.\n"
+        "<workspace>/<repo>/.\n"
+        "Flat layout (default): <pr>-<branch>/ next to <repo>-main/; "
+        "hierarchical: <repo>/ is the main checkout with PRs in .worktrees/.\n"
         "Tip: ~/repos is a fine pick if you want everything in your home."
     )
     base = os.path.expanduser(
@@ -729,8 +746,8 @@ def cmd_setup() -> int:
     layout_choice = (
         _prompt(
             label=(
-                "Worktree layout (hierarchical: <repo>/.worktrees/<pr>-<branch>; "
-                "flat: <repo>/<pr>-<branch>)"
+                "Worktree layout (hierarchical: <repo>/ is the main checkout, "
+                "PRs under <repo>/.worktrees/<pr>-<branch>; flat: <repo>/<pr>-<branch>)"
             ),
             default=cfg["worktree_layout"],
         )
@@ -750,7 +767,10 @@ def cmd_setup() -> int:
     )
 
     bare_repo = _prompt_bool(
-        label="Store .git as a bare repo at <repo>/.git and treat main as a worktree?",
+        label=(
+            "Store .git as a bare repo at <repo>/.git, with main as a worktree "
+            "under <repo>/.worktrees/?"
+        ),
         default=cfg["bare_repo"],
     )
 
