@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from repo_control import config, gh, git, ide, picker, setup, state
+from repo_control import config, gh, git, ide, picker, selection, setup, state
 
 SKILL_NAME = "repo-control"
 
@@ -497,13 +497,16 @@ def _select_repos_interactive(
         picker.Choice(key=f"{owner}/{name}", label=f"{owner}/{name} ({len(prs)} PRs)")
         for (owner, name), prs in sorted(by_repo.items())
     ]
+    pre = selection.preselected_keys(last=selection.load_selection(), available=all_keys)
     chosen_keys = picker.select_multi(
-        title="Repos to sync:", choices=choices, default_selected=True
+        title="Repos to sync:", choices=choices, default_selected=True, preselected_keys=pre
     )
     if chosen_keys is None:
         return None
     chosen_set = set(chosen_keys)
-    return {(owner, name) for owner, name in by_repo if f"{owner}/{name}" in chosen_set}
+    chosen = {(owner, name) for owner, name in by_repo if f"{owner}/{name}" in chosen_set}
+    selection.save_selection(chosen)
+    return chosen
 
 
 def _parse_repo_arg(*, value: str) -> tuple[str, str] | None:
