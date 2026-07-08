@@ -5,6 +5,7 @@ from repo_control import git
 
 LEGACY_REPO_DIR_SUFFIX = "-control"
 WORKTREES_SUBDIR = ".worktrees"
+SIDECAR_PREFIX = "claude/"
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,20 @@ class RepoDir:
 
 def slugify_branch(*, branch: str) -> str:
     return branch.replace("/", "-").replace(" ", "-")
+
+
+def sidecar_name(*, real: str) -> str:
+    """The sidecar branch a worktree checks out for real PR branch `real`."""
+    return f"{SIDECAR_PREFIX}{real}"
+
+
+def real_from_sidecar(*, sidecar: str) -> str:
+    """The real PR branch behind a sidecar branch (no-op for non-sidecar names)."""
+    return sidecar.removeprefix(SIDECAR_PREFIX)
+
+
+def is_sidecar(*, branch: str) -> bool:
+    return branch.startswith(SIDECAR_PREFIX)
 
 
 def main_dir_name(*, name: str, prefix: bool) -> str:

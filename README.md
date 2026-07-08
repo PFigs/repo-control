@@ -15,6 +15,12 @@ Mirror every open GitHub PR you've authored as a per-repo cluster of git worktre
 
 A single daily `repo-control sync` clones missing repos, creates worktrees for new PRs, refreshes existing ones, and removes worktrees whose PRs were merged/closed (only if the worktree is clean). First creation runs `mise install` / `uv sync` / `npm install` automatically when those manifests exist.
 
+## Sidecar branches
+
+Each PR worktree is checked out on a **sidecar branch** `claude/<branch>`, not the PR's real branch. The real `<branch>` stays in `main/` un-checked-out, so `gt sync` can restack the whole Graphite stack there — git refuses to rebase a branch that is checked out in a worktree.
+
+Edit in the worktree on the sidecar; restack from `main/` with `repo-control sync-stack`. That command is flock-guarded (parallel sessions can't collide): it fast-forwards `<branch>` from the sidecar, restacks (`gt sync` where Graphite is set up, else `git fetch` + fast-forward), then rebases the sidecar back onto the restacked `<branch>`. Set `sidecar_branches = false` to keep the older direct-checkout behavior.
+
 ## Install
 
 From PyPI:
@@ -49,6 +55,7 @@ Requires `gh` (authenticated) and `uv` on PATH. Python 3.12+.
 
 ```bash
 repo-control sync               # daily refresh (auto-runs setup on first invocation)
+repo-control sync-stack         # flock-guarded restack: reconcile sidecars from main
 repo-control list               # table of repo / pr / branch / status / path
 repo-control open <pr>          # launch the configured IDE on that worktree
 repo-control open <pr> --ide=code
@@ -72,6 +79,7 @@ XDG-conformant paths:
 base_path = "/home/<user>/.local/share/repo-control"
 ide = "idea"                   # any binary on PATH; suggestions: idea, code, zed
 skip_repos = []                # ["owner/repo", ...] to ignore
+sidecar_branches = true        # check PR worktrees out on a claude/<branch> sidecar
 ```
 
 `repo-control setup` is interactive — first sync triggers it automatically; re-run any time to change settings.

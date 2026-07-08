@@ -194,6 +194,108 @@ def worktree_add_tracking(
     )
 
 
+def branch_exists(*, repo_path: Path, branch: str) -> bool:
+    result = _run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=repo_path,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def create_branch(*, repo_path: Path, name: str, start_point: str) -> None:
+    _run(["git", "branch", name, start_point], cwd=repo_path)
+
+
+def set_upstream(*, repo_path: Path, branch: str, upstream: str) -> None:
+    _run(["git", "branch", f"--set-upstream-to={upstream}", branch], cwd=repo_path)
+
+
+def worktree_add_sidecar(
+    *,
+    repo_path: Path,
+    target: Path,
+    real_branch: str,
+    sidecar_branch: str,
+    start_point: str,
+) -> None:
+    """Create `target` checked out on `sidecar_branch`, leaving `real_branch` free.
+
+    `real_branch` is created from `start_point` if it does not exist yet; it is never
+    checked out, so `gt sync` in <repo>-main can restack it. The sidecar tracks the
+    real branch so ahead/behind detection keeps working.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not branch_exists(repo_path=repo_path, branch=real_branch):
+        create_branch(repo_path=repo_path, name=real_branch, start_point=start_point)
+    _run(
+        ["git", "worktree", "add", "-b", sidecar_branch, str(target), real_branch],
+        cwd=repo_path,
+    )
+    set_upstream(repo_path=repo_path, branch=sidecar_branch, upstream=real_branch)
+
+
+def is_ancestor(*, repo_path: Path, ancestor: str, descendant: str) -> bool:
+    result = _run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repo_path,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def fast_forward_branch(*, repo_path: Path, branch: str, to_ref: str) -> bool:
+    """Move `branch` up to `to_ref` when it is a fast-forward. Returns whether it moved."""
+    if not is_ancestor(repo_path=repo_path, ancestor=branch, descendant=to_ref):
+        return False
+    branch_sha = _run(["git", "rev-parse", branch], cwd=repo_path, check=False)
+    target_sha = _run(["git", "rev-parse", to_ref], cwd=repo_path, check=False)
+    if branch_sha.stdout.strip() == target_sha.stdout.strip():
+        return False
+    _run(["git", "branch", "-f", branch, to_ref], cwd=repo_path)
+    return True
+
+
+def current_branch(*, worktree_path: Path) -> str | None:
+    result = _run(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree_path, check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def switch_new_branch(*, worktree_path: Path, name: str) -> None:
+    """Create `name` at HEAD and switch the worktree to it, carrying uncommitted work."""
+    _run(["git", "switch", "-c", name], cwd=worktree_path)
+
+
+def rebase(*, worktree_path: Path, onto: str) -> bool:
+    """Rebase the worktree's branch onto `onto`. Aborts and returns False on conflict."""
+    result = _run(["git", "rebase", onto], cwd=worktree_path, check=False)
+    if result.returncode != 0:
+        _run(["git", "rebase", "--abort"], cwd=worktree_path, check=False)
+        return False
+    return True
+
+
+def gt_sync(*, repo_path: Path) -> bool:
+    """Run `gt sync` non-interactively. Returns False if it fails or `gt` is missing."""
+    try:
+        result = _run(["gt", "sync", "--no-interactive"], cwd=repo_path, check=False)
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def has_graphite(*, repo_path: Path) -> bool:
+    result = _run(["git", "rev-parse", "--git-common-dir"], cwd=repo_path, check=False)
+    if result.returncode != 0:
+        return False
+    common = Path(result.stdout.strip())
+    if not common.is_absolute():
+        common = (repo_path / common).resolve()
+    return (common / ".graphite_repo_config").exists()
+
+
 def worktree_remove(*, repo_path: Path, target: Path, force: bool = False) -> None:
     args = ["git", "worktree", "remove"]
     if force:
