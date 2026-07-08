@@ -95,15 +95,23 @@ def resolve_repo_dir(*, base_path: Path, owner: str, name: str) -> Path:
     return base_path / name.lower()
 
 
-def ensure_main_path(*, repo_path: Path, name: str, prefix: bool) -> Path:
+def ensure_main_path(*, repo_path: Path, name: str, layout: str, prefix: bool, bare: bool) -> Path:
     """Return existing main checkout if a known layout matches; else the canonical new path."""
     for candidate in (
         repo_path / f"{name.lower()}-main",
         repo_path / f"{repo_path.name.lower()}-main",
         repo_path / "main",
+        repo_path / WORKTREES_SUBDIR / f"{name.lower()}-main",
+        repo_path / WORKTREES_SUBDIR / "main",
     ):
-        if candidate.exists():
+        if (candidate / ".git").exists():
             return candidate
+    if (repo_path / ".git").is_dir() and not bare:
+        return repo_path
+    if layout == "hierarchical":
+        if bare:
+            return repo_path / WORKTREES_SUBDIR / main_dir_name(name=name, prefix=prefix)
+        return repo_path
     return repo_path / main_dir_name(name=name, prefix=prefix)
 
 
@@ -130,12 +138,19 @@ def discover_repos(*, base_path: Path) -> list[RepoDir]:
 
 
 def _find_main_in(child: Path) -> Path | None:
-    for candidate in (
-        child / f"{child.name.lower()}-main",
-        child / "main",
-    ):
-        if candidate.exists():
-            return candidate
+    # Exact names only: PR worktrees (`<pr>-<slug>`) can end in "-main" too.
+    names = {child.name.lower()}
+    if (child / ".git").is_dir():
+        url = git.remote_url(repo_path=child)
+        parsed = git.parse_owner_repo(url=url) if url else None
+        if parsed is not None:
+            names.add(parsed[1].lower())
+    for base in (child, child / WORKTREES_SUBDIR):
+        for candidate in (*(base / f"{n}-main" for n in sorted(names)), base / "main"):
+            if (candidate / ".git").exists():
+                return candidate
+    if (child / ".git").is_dir():
+        return child
     return None
 
 

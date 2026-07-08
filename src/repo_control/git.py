@@ -316,6 +316,19 @@ def delete_branch(*, repo_path: Path, branch: str) -> None:
     _run(["git", "branch", "-D", branch], cwd=repo_path, check=False)
 
 
+def ensure_excluded(*, worktree_path: Path, patterns: list[str]) -> None:
+    """Add `patterns` to `.git/info/exclude` so untracked dirs don't read as dirty."""
+    git_dir = worktree_path / ".git"
+    if not git_dir.is_dir():
+        return
+    exclude = git_dir / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text().splitlines() if exclude.exists() else []
+    missing = [p for p in patterns if p not in existing]
+    if missing:
+        exclude.write_text("\n".join([*existing, *missing]) + "\n")
+
+
 def is_clean(*, worktree_path: Path) -> bool:
     status = _run(["git", "status", "--porcelain"], cwd=worktree_path)
     if status.stdout.strip():
